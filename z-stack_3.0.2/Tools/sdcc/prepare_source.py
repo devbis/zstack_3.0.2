@@ -544,13 +544,16 @@ def prepare_cc2530_hal_board_cfg_header(src: Path, dst: Path) -> None:
 
 
 def prepare_cc2530_zcl_sampleapps_ui_header(src: Path, dst: Path) -> None:
-    _prepare_text(
-        src,
-        dst,
-        [
-            (ZCL_SAMPLEAPPS_UI_OLD, ZCL_SAMPLEAPPS_UI_NEW, "zcl_sampleapps_ui reentrant callback"),
-        ],
-    )
+    text = _read_text(src)
+    if ZCL_SAMPLEAPPS_UI_NEW not in text:
+        text = _replace_text_once(
+            text,
+            ZCL_SAMPLEAPPS_UI_OLD,
+            ZCL_SAMPLEAPPS_UI_NEW,
+            "zcl_sampleapps_ui reentrant callback",
+        )
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(text, encoding="utf-8")
 
 
 def prepare_cc2530_onboard_header(src: Path, dst: Path) -> None:

@@ -147,6 +147,39 @@ Verified output example:
 - `sdcc-build/zstack-samplelight-cc2530db-coordinator-huge-stackauto-f256-slim-fb0-lcd0-uart0-key0/samplelight-cc2530db-coordinator.hex`
 - validated flash end: `0x3bff1`
 
+## Step 1: IAR import bundle
+
+`iar_import.py` implements the normalization/import step that sits before any
+plain CMake build. It stages a self-contained bundle with:
+- `src/` copied SDK tree with optional vendor patch applied
+- `include/` generated SDCC cfg header plus normalized overlay/alias headers
+- `libs/original/` copied IAR libraries from the project manifest
+- `libs/converted/` `iar2sdcc convert` output for the copied libraries
+- `metadata/manifest.json` normalized manifest rooted at the staged tree
+- `compile-plan.json`, `layout.json`, `cmake/project.cmake`, `report.json`, `report.txt`
+
+Example for the patched `CC2530.ewp` / `ZNP-with-SBL` target:
+
+```bash
+python3 z-stack_3.0.2/Tools/sdcc/iar_import.py \
+  --project z-stack_3.0.2/Projects/zstack/ZNP/CC253x/CC2530.ewp \
+  --config ZNP-with-SBL \
+  --profile balanced \
+  --out-dir sdcc-build/znp-cc2530-import \
+  --sdcc-toolchain-root /path/to/sdcc-build
+```
+
+This step is intentionally independent from the later build:
+- it does not require IAR for Windows tools
+- it leaves the imported project as ordinary files plus JSON/CMake metadata
+- `cmake/project.cmake` is just a handoff descriptor for the next stage
+
+Current scope:
+- known-good import defaults are wired for `CC2530 ZNP-with-SBL`
+- non-ZNP imports currently support `--profile full`
+- library conversion at this step is still metadata-driven; full module
+  selection depends on later link feedback
+
 ## ZNP `CC2530 ZNP-with-SBL`
 
 The patched coordinator firmware from
