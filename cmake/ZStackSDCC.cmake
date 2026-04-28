@@ -2,7 +2,7 @@ include(CMakeParseArguments)
 
 function(zstack_add_znp_cc2530_with_sbl_target)
   set(options)
-  set(oneValueArgs NAME PROFILE SOURCE_ROOT TOOLCHAIN_ROOT TOOLCHAIN_URL PORT_INCLUDE_DIR WORK_ROOT OUTPUT_BASE_DIR PYTHON_EXECUTABLE)
+  set(oneValueArgs NAME PROFILE SOURCE_ROOT TOOLCHAIN_ROOT TOOLCHAIN_URL PORT_INCLUDE_DIR WORK_ROOT IMPORT_BUNDLE_DIR OUTPUT_BASE_DIR PYTHON_EXECUTABLE)
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "" ${ARGN})
 
   foreach(required_arg NAME PROFILE SOURCE_ROOT TOOLCHAIN_URL WORK_ROOT OUTPUT_BASE_DIR PYTHON_EXECUTABLE)
@@ -15,11 +15,10 @@ function(zstack_add_znp_cc2530_with_sbl_target)
   set(sdk_source_dir "${repo_root}/z-stack_3.0.2")
   set(patch_file "${repo_root}/firmware_CC2531_CC2530.patch")
   set(sdcc_tools_dir "${sdk_source_dir}/Tools/sdcc")
-  set(prepare_script "${sdcc_tools_dir}/prepare_znp_cc2530_with_sbl.py")
-  set(extract_script "${sdcc_tools_dir}/extract_iar_project.py")
+  set(importer_script "${sdcc_tools_dir}/iar_import.py")
   set(znp_project_file "${sdk_source_dir}/Projects/zstack/ZNP/CC253x/CC2530.ewp")
-  set(znp_cfg_file "${sdk_source_dir}/Projects/zstack/ZNP/Source/znp.cfg")
-  set(znp_preinclude_file "${sdk_source_dir}/Projects/zstack/ZNP/Source/preinclude.h")
+  set(znp_config_name "ZNP-with-SBL")
+  set(project_name "CC2530ZNP-with-SBL")
 
   if(NOT EXISTS "${sdk_source_dir}")
     message(FATAL_ERROR "Missing vendored SDK tree: ${sdk_source_dir}")
@@ -27,90 +26,21 @@ function(zstack_add_znp_cc2530_with_sbl_target)
   if(NOT EXISTS "${patch_file}")
     message(FATAL_ERROR "Missing vendor patch: ${patch_file}")
   endif()
-  if(NOT EXISTS "${prepare_script}")
-    message(FATAL_ERROR "Missing SDCC preparation script: ${prepare_script}")
+  if(NOT EXISTS "${importer_script}")
+    message(FATAL_ERROR "Missing IAR import script: ${importer_script}")
   endif()
 
   set_property(
     DIRECTORY
     APPEND
     PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${prepare_script}"
-    "${extract_script}"
+    "${importer_script}"
     "${znp_project_file}"
-    "${znp_cfg_file}"
-    "${znp_preinclude_file}"
+    "${patch_file}"
   )
-
-  set(configure_output_dir "${CMAKE_CURRENT_BINARY_DIR}/generated/${ARG_PROFILE}")
-  set(configure_manifest "${configure_output_dir}/znp-cc2530-with-sbl.manifest.json")
-  set(configure_cfg_header "${configure_output_dir}/znp-cc2530-with-sbl-sdcc-cfg.h")
-  set(configure_stage_dir "${configure_output_dir}/workspace/z-stack_3.0.2")
-  set(configure_stage_stamp "${configure_output_dir}/configure-stage.stamp")
-  set(configure_prepare_script "${configure_stage_dir}/Tools/sdcc/prepare_znp_cc2530_with_sbl.py")
-  file(MAKE_DIRECTORY "${configure_output_dir}")
-
-  execute_process(
-    COMMAND
-      "${CMAKE_COMMAND}"
-      -DSOURCE_SDK_DIR=${sdk_source_dir}
-      -DSTAGED_SDK_DIR=${configure_stage_dir}
-      -DPATCH_FILE=${patch_file}
-      -DSTAMP_FILE=${configure_stage_stamp}
-      -P "${repo_root}/cmake/StageZStackSDK.cmake"
-    RESULT_VARIABLE configure_stage_rv
-    OUTPUT_VARIABLE configure_stage_stdout
-    ERROR_VARIABLE configure_stage_stderr
-  )
-  if(NOT configure_stage_rv EQUAL 0)
-    message(
-      FATAL_ERROR
-      "Failed to prepare staged SDK for configure-time manifest generation.\n${configure_stage_stdout}${configure_stage_stderr}"
-    )
-  endif()
-
-  execute_process(
-    COMMAND
-      "${ARG_PYTHON_EXECUTABLE}" "${configure_prepare_script}"
-      --profile "${ARG_PROFILE}"
-      --output-manifest "${configure_manifest}"
-      --output-header "${configure_cfg_header}"
-    WORKING_DIRECTORY "${configure_stage_dir}"
-    RESULT_VARIABLE prepare_rv
-    OUTPUT_VARIABLE prepare_stdout
-    ERROR_VARIABLE prepare_stderr
-  )
-  if(NOT prepare_rv EQUAL 0)
-    message(
-      FATAL_ERROR
-      "Failed to generate ZNP manifest for profile '${ARG_PROFILE}'.\n${prepare_stdout}${prepare_stderr}"
-    )
-  endif()
-
-  file(GLOB_RECURSE sdk_stage_inputs CONFIGURE_DEPENDS "${sdk_source_dir}/*")
 
   set(work_root "${ARG_WORK_ROOT}")
   set(stamps_dir "${work_root}/stamps")
-  set(stage_workspace_dir "${work_root}/workspace")
-  set(staged_sdk_dir "${stage_workspace_dir}/z-stack_3.0.2")
-  set(stage_stamp "${stamps_dir}/stage-sdk-${ARG_PROFILE}.stamp")
-
-  add_custom_command(
-    OUTPUT "${stage_stamp}"
-    COMMAND
-      "${CMAKE_COMMAND}"
-      -DSOURCE_SDK_DIR=${sdk_source_dir}
-      -DSTAGED_SDK_DIR=${staged_sdk_dir}
-      -DPATCH_FILE=${patch_file}
-      -DSTAMP_FILE=${stage_stamp}
-      -P "${repo_root}/cmake/StageZStackSDK.cmake"
-    DEPENDS
-      ${sdk_stage_inputs}
-      "${patch_file}"
-      "${repo_root}/cmake/StageZStackSDK.cmake"
-    COMMENT "Staging patched Z-Stack SDK tree"
-    VERBATIM
-  )
 
   set(toolchain_download_root "${work_root}/toolchain-download")
   set(toolchain_tarball "${toolchain_download_root}/sdcc-toolchain.tar.xz")
@@ -143,9 +73,64 @@ function(zstack_add_znp_cc2530_with_sbl_target)
     VERBATIM
   )
 
+  if(ARG_IMPORT_BUNDLE_DIR)
+    set(import_bundle_dir "${ARG_IMPORT_BUNDLE_DIR}")
+    set(import_stamp "${stamps_dir}/import-${ARG_PROFILE}.stamp")
+    set(imported_source_root "${import_bundle_dir}/src")
+    set(imported_manifest "${import_bundle_dir}/metadata/manifest.json")
+    set(imported_cfg_header "${import_bundle_dir}/include/cc2530-znp-with-sbl-sdcc-cfg.h")
+
+    if(NOT EXISTS "${imported_source_root}")
+      message(FATAL_ERROR "Provided ZSTACK_IMPORT_BUNDLE_DIR does not contain src/: ${import_bundle_dir}")
+    endif()
+    if(NOT EXISTS "${imported_manifest}")
+      message(FATAL_ERROR "Provided ZSTACK_IMPORT_BUNDLE_DIR does not contain metadata/manifest.json: ${import_bundle_dir}")
+    endif()
+    if(NOT EXISTS "${imported_cfg_header}")
+      message(FATAL_ERROR "Provided ZSTACK_IMPORT_BUNDLE_DIR does not contain include/cc2530-znp-with-sbl-sdcc-cfg.h: ${import_bundle_dir}")
+    endif()
+
+    file(GLOB_RECURSE import_bundle_inputs CONFIGURE_DEPENDS "${import_bundle_dir}/*")
+    add_custom_command(
+      OUTPUT "${import_stamp}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${stamps_dir}"
+      COMMAND "${CMAKE_COMMAND}" -E touch "${import_stamp}"
+      DEPENDS ${import_bundle_inputs}
+      COMMENT "Using pre-generated IAR import bundle"
+      VERBATIM
+    )
+  else()
+    file(GLOB_RECURSE sdk_import_inputs CONFIGURE_DEPENDS "${sdk_source_dir}/*")
+    file(GLOB_RECURSE sdcc_tool_inputs CONFIGURE_DEPENDS "${sdcc_tools_dir}/*")
+
+    set(import_bundle_dir "${work_root}/import/${ARG_PROFILE}")
+    set(import_stamp "${stamps_dir}/import-${ARG_PROFILE}.stamp")
+    set(imported_source_root "${import_bundle_dir}/src")
+    set(imported_manifest "${import_bundle_dir}/metadata/manifest.json")
+    set(imported_cfg_header "${import_bundle_dir}/include/cc2530-znp-with-sbl-sdcc-cfg.h")
+
+    add_custom_command(
+      OUTPUT "${import_stamp}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory "${stamps_dir}"
+      COMMAND
+        "${ARG_PYTHON_EXECUTABLE}" "${importer_script}"
+        --project "${znp_project_file}"
+        --config "${znp_config_name}"
+        --profile "${ARG_PROFILE}"
+        --out-dir "${import_bundle_dir}"
+        --patch "${patch_file}"
+      COMMAND "${CMAKE_COMMAND}" -E touch "${import_stamp}"
+      DEPENDS
+        ${sdk_import_inputs}
+        ${sdcc_tool_inputs}
+        "${patch_file}"
+      COMMENT "Importing IAR project bundle"
+      VERBATIM
+    )
+  endif()
+
   set(artifact_dir "${ARG_OUTPUT_BASE_DIR}/${ARG_PROFILE}")
   set(sdcc_work_dir "${work_root}/sdcc-work")
-  set(project_name "CC2530ZNP-with-SBL")
   set(hex_file "${artifact_dir}/${project_name}.hex")
   set(ihx_file "${artifact_dir}/${project_name}.ihx")
   set(mem_file "${artifact_dir}/${project_name}.mem")
@@ -154,8 +139,8 @@ function(zstack_add_znp_cc2530_with_sbl_target)
     "PYTHON_BIN=${ARG_PYTHON_EXECUTABLE}"
     "SDCC_BUILD_DIR=${sdcc_work_dir}"
     "SDCC_TOOLCHAIN_DIR=${toolchain_overlay_root}"
-    "MANIFEST=${configure_manifest}"
-    "CFG_HEADER=${configure_cfg_header}"
+    "MANIFEST=${imported_manifest}"
+    "CFG_HEADER=${imported_cfg_header}"
     "ZNP_SDCC_PROFILE=${ARG_PROFILE}"
   )
   if(ARG_PORT_INCLUDE_DIR)
@@ -174,18 +159,21 @@ function(zstack_add_znp_cc2530_with_sbl_target)
     COMMAND
       "${CMAKE_COMMAND}" -E env
       ${build_env}
-      bash "${staged_sdk_dir}/Tools/sdcc/build_znp_cc2530_with_sbl.sh" "${artifact_dir}"
+      bash "${imported_source_root}/Tools/sdcc/build_znp_cc2530_with_sbl.sh" "${artifact_dir}"
     DEPENDS
-      "${stage_stamp}"
+      "${import_stamp}"
       "${toolchain_stamp}"
-      "${configure_manifest}"
-      "${configure_cfg_header}"
+      "${imported_manifest}"
+      "${imported_cfg_header}"
       "${repo_root}/cmake/ZStackSDCC.cmake"
     COMMENT "Building ${project_name} (${ARG_PROFILE})"
     VERBATIM
   )
 
   add_custom_target("${ARG_NAME}" ALL DEPENDS "${hex_file}" "${ihx_file}" "${mem_file}")
+  add_custom_target("${ARG_NAME}_hex" DEPENDS "${hex_file}")
+  add_custom_target("${ARG_NAME}_ihx" DEPENDS "${ihx_file}")
+  add_custom_target("${ARG_NAME}_mem" DEPENDS "${mem_file}")
 
   set("${ARG_NAME}_ARTIFACT_DIR" "${artifact_dir}" PARENT_SCOPE)
   set("${ARG_NAME}_HEX" "${hex_file}" PARENT_SCOPE)

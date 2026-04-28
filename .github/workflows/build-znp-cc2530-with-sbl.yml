@@ -23,6 +23,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake jq patch xz-utils
 
+      - name: Import IAR Project Bundle
+        shell: bash
+        run: |
+          set -euxo pipefail
+          PROFILE="${{ github.event.inputs.profile }}"
+          if [ -z "$PROFILE" ]; then
+            PROFILE=balanced
+          fi
+          IMPORT_DIR="$RUNNER_TEMP/znp-import/$PROFILE"
+          python3 z-stack_3.0.2/Tools/sdcc/iar_import.py \
+            --project z-stack_3.0.2/Projects/zstack/ZNP/CC253x/CC2530.ewp \
+            --config ZNP-with-SBL \
+            --profile "$PROFILE" \
+            --out-dir "$IMPORT_DIR" \
+            --patch firmware_CC2531_CC2530.patch
+          echo "ZSTACK_IMPORT_BUNDLE_DIR=$IMPORT_DIR" >> "$GITHUB_ENV"
+
       - name: Configure Firmware Build
         shell: bash
         run: |
@@ -31,13 +48,21 @@ jobs:
           if [ -z "$PROFILE" ]; then
             PROFILE=balanced
           fi
-          cmake -S . -B build -DZSTACK_PROFILE="$PROFILE"
+          cmake -S . -B build \
+            -DZSTACK_PROFILE="$PROFILE" \
+            -DZSTACK_IMPORT_BUNDLE_DIR="$ZSTACK_IMPORT_BUNDLE_DIR"
 
       - name: Build Firmware
         shell: bash
         run: |
           set -euxo pipefail
           cmake --build build --parallel
+
+      - name: Build HEX Target
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --build build --target znp_cc2530_with_sbl_hex --parallel
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

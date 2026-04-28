@@ -41,6 +41,12 @@ set(
   "Workspace used for staged SDK copies, generated toolchain overlay, and intermediate artifacts."
 )
 set(
+  ZSTACK_IMPORT_BUNDLE_DIR
+  ""
+  CACHE PATH
+  "Optional pre-generated import bundle directory produced by Tools/sdcc/iar_import.py."
+)
+set(
   ZSTACK_OUTPUT_BASE_DIR
   "${CMAKE_BINARY_DIR}/out/znp_cc2530_with_sbl"
   CACHE PATH
@@ -67,6 +73,7 @@ zstack_add_znp_cc2530_with_sbl_target(
   TOOLCHAIN_URL "${SDCC_TOOLCHAIN_URL}"
   PORT_INCLUDE_DIR "${SDCC_PORT_INCLUDE_DIR}"
   WORK_ROOT "${ZSTACK_WORK_ROOT}"
+  IMPORT_BUNDLE_DIR "${ZSTACK_IMPORT_BUNDLE_DIR}"
   OUTPUT_BASE_DIR "${ZSTACK_OUTPUT_BASE_DIR}"
   PYTHON_EXECUTABLE "${Python3_EXECUTABLE}"
 )
