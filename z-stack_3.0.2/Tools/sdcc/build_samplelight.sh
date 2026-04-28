@@ -211,14 +211,28 @@ fi
 mkdir -p "$OBJ_DIR"
 rm -f "$IHX_FILE" "$HEX_FILE" "$LOGICAL_HEX_FILE"
 
-"$PYTHON_BIN" "$SCRIPT_DIR/manifest_paths.py" \
-  --manifest "$MANIFEST" \
-  --output "$NORMALIZED_MANIFEST" \
-  --repo-root "$ZSTACK_DIR"
+case "$BUILD_SAMPLELIGHT_MODE" in
+  full|prepare-native)
+    "$PYTHON_BIN" "$SCRIPT_DIR/manifest_paths.py" \
+      --manifest "$MANIFEST" \
+      --output "$NORMALIZED_MANIFEST" \
+      --repo-root "$ZSTACK_DIR"
 
-"$PYTHON_BIN" "$COMPILE_PLAN_SCRIPT" \
-  --manifest "$NORMALIZED_MANIFEST" \
-  --output "$COMPILE_PLAN_JSON"
+    "$PYTHON_BIN" "$COMPILE_PLAN_SCRIPT" \
+      --manifest "$NORMALIZED_MANIFEST" \
+      --output "$COMPILE_PLAN_JSON"
+    ;;
+  compile-entry|link-only)
+    if [ ! -f "$NORMALIZED_MANIFEST" ] || [ ! -f "$COMPILE_PLAN_JSON" ]; then
+      echo "Missing native prepare outputs: $NORMALIZED_MANIFEST or $COMPILE_PLAN_JSON" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Unsupported BUILD_SAMPLELIGHT_MODE: $BUILD_SAMPLELIGHT_MODE" >&2
+    exit 1
+    ;;
+esac
 
 MANIFEST="$NORMALIZED_MANIFEST"
 
@@ -355,7 +369,8 @@ prepare_compile_source() {
 }
 
 prepare_header_overlays() {
-  local entry mode rel_spec rel_path input_src output_src candidate
+  local entry mode rel_spec rel_path input_src output_src candidate sdk_rel_root
+  sdk_rel_root=${ZSTACK_DIR#"$WORKSPACE_DIR"/}
   for entry in "${HEADER_OVERLAYS[@]}"; do
     mode=${entry%%:*}
     rel_spec=${entry#*:}
@@ -371,7 +386,7 @@ prepare_header_overlays() {
     if [ -z "$input_src" ]; then
       continue
     fi
-    output_src="$ZSTACK_DIR/$rel_path"
+    output_src="$GENERATED_SRC_DIR/$sdk_rel_root/$rel_path"
     prepare_compile_source "$mode" "$input_src" "$output_src"
   done
 }
