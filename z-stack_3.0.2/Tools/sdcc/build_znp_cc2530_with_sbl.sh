@@ -6,6 +6,8 @@ ZSTACK_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)
 WORKSPACE_DIR=$(cd "$ZSTACK_DIR/.." && pwd)
 SDCC_BUILD_DIR=${SDCC_BUILD_DIR:-"$WORKSPACE_DIR/sdcc-build"}
 PYTHON_BIN=${PYTHON_BIN:-python3}
+BUILD_SAMPLELIGHT_MODE=${BUILD_SAMPLELIGHT_MODE:-full}
+ENTRY_JSON_FILE=${ENTRY_JSON_FILE:-}
 
 PROJECT_NAME="CC2530ZNP-with-SBL"
 ZNP_SDCC_PROFILE=${ZNP_SDCC_PROFILE:-full}
@@ -36,6 +38,8 @@ env \
   PROJECT_NAME="$PROJECT_NAME" \
   MANIFEST="$GENERATED_MANIFEST" \
   CFG_HEADER="$GENERATED_CFG_HEADER" \
+  BUILD_SAMPLELIGHT_MODE="$BUILD_SAMPLELIGHT_MODE" \
+  ENTRY_JSON_FILE="$ENTRY_JSON_FILE" \
   SDCC_STACK_MODE=stack-auto-xstack \
   SDCC_CODE_LOC=0x2000 \
   SDCC_CODE_SIZE=0x3c800 \
@@ -45,6 +49,18 @@ env \
   CONVERTED_DIR="$SDCC_BUILD_DIR/iar-converted/znp-cc2530-with-sbl$PROFILE_SUFFIX" \
   RELAX_MEMORY=0 \
   bash "$SCRIPT_DIR/build_samplelight.sh" "$OUT_DIR"
+
+case "$BUILD_SAMPLELIGHT_MODE" in
+  prepare-native|compile-entry)
+    exit 0
+    ;;
+  link-only|full)
+    ;;
+  *)
+    echo "Unsupported BUILD_SAMPLELIGHT_MODE: $BUILD_SAMPLELIGHT_MODE" >&2
+    exit 1
+    ;;
+esac
 
 "$PYTHON_BIN" - "$MEM_FILE" "$IHX_FILE" "$FLASH_LIMIT_HEX" "$CODE_FLOOR_HEX" <<'PY'
 import re
