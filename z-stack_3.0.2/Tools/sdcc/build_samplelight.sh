@@ -113,6 +113,8 @@ if [ ! -f "$CONVERTER_CLI" ]; then
   exit 1
 fi
 
+export PATH="$SDCC_TOOLCHAIN_DIR/bin:$PATH"
+
 ABI_ARGS=()
 STACK_ARGS=()
 EXTRA_ARGS=()
