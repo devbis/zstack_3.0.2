@@ -46,39 +46,39 @@ if [ ! -x "$TOOLCHAIN_DIR/bin/sdcc" ]; then
 fi
 
 cat >"$TOOLCHAIN_DIR/bin/sdcpp" <<'EOF'
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
 force_c23=0
-set --
+translated=()
 for arg in "$@"; do
   case "$arg" in
     --obj-ext=*)
       ;;
     -std=c23)
       force_c23=1
-      set -- "$@" "-std=c2x"
+      translated+=("-std=c2x")
       ;;
     *)
-      set -- "$@" "$arg"
+      translated+=("$arg")
       ;;
   esac
 done
 
 if [ "$force_c23" -eq 1 ]; then
-  set -- "$@" "-Wno-builtin-macro-redefined" "-D__STDC_VERSION__=202311L"
+  translated+=("-Wno-builtin-macro-redefined" "-D__STDC_VERSION__=202311L")
 fi
 
 if command -v gcc >/dev/null 2>&1; then
-  exec gcc -E -U__GNUC__ -U__GNUC_MINOR__ -U__GNUC_PATCHLEVEL__ -U__clang__ -U__llvm__ "$@"
+  exec gcc -E -U__GNUC__ -U__GNUC_MINOR__ -U__GNUC_PATCHLEVEL__ -U__clang__ -U__llvm__ "${translated[@]}"
 fi
 
 if command -v clang >/dev/null 2>&1; then
-  exec clang -E -U__GNUC__ -U__GNUC_MINOR__ -U__GNUC_PATCHLEVEL__ -U__clang__ -U__llvm__ "$@"
+  exec clang -E -U__GNUC__ -U__GNUC_MINOR__ -U__GNUC_PATCHLEVEL__ -U__clang__ -U__llvm__ "${translated[@]}"
 fi
 
 if command -v cpp >/dev/null 2>&1; then
-  exec cpp "$@"
+  exec cpp "${translated[@]}"
 fi
 
 echo "error: unable to locate gcc, clang, or cpp for sdcpp shim" >&2
