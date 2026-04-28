@@ -45,6 +45,36 @@ if [ ! -x "$TOOLCHAIN_DIR/bin/sdcc" ]; then
   tar -xf "$TOOLCHAIN_TARBALL" -C "$TOOLCHAIN_DIR"
 fi
 
+if [ ! -x "$TOOLCHAIN_DIR/bin/sdcpp" ]; then
+  cat >"$TOOLCHAIN_DIR/bin/sdcpp" <<'EOF'
+#!/bin/sh
+set -eu
+
+set --
+for arg in "$@"; do
+  case "$arg" in
+    --obj-ext=*)
+      ;;
+    *)
+      set -- "$@" "$arg"
+      ;;
+  esac
+done
+
+if command -v cpp >/dev/null 2>&1; then
+  exec cpp "$@"
+fi
+
+if command -v clang >/dev/null 2>&1; then
+  exec clang -E "$@"
+fi
+
+echo "error: unable to locate cpp or clang for sdcpp shim" >&2
+exit 1
+EOF
+  chmod +x "$TOOLCHAIN_DIR/bin/sdcpp"
+fi
+
 export PATH="$TOOLCHAIN_DIR/bin:$PATH"
 
 ZNP_SDCC_PROFILE="$PROFILE" \
