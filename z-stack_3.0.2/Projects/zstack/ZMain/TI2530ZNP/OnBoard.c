@@ -373,6 +373,28 @@ bool OnBoard_CheckVoltage( void )
  *********************************************************************/
 uint16 OnBoard_stack_used(void)
 {
+#if defined(__SDCC)
+  uint16 addr;
+  uint8 cnt = 0;
+
+  for (addr = (uint16)CSTACK_END; addr > (uint16)CSTACK_BEG; addr--)
+  {
+    if (STACK_INIT_VALUE == *(uint8 const XDATA *)addr)
+    {
+      if (++cnt >= MIN_RAM_INIT)
+      {
+        addr += MIN_RAM_INIT;
+        break;
+      }
+    }
+    else
+    {
+      cnt = 0;
+    }
+  }
+
+  return (uint16)((uint16)CSTACK_END - addr + 1);
+#else
   uint8 const *ptr;
   uint8 cnt = 0;
 
@@ -393,6 +415,7 @@ uint16 OnBoard_stack_used(void)
   }
 
   return (uint16)(CSTACK_END - ptr + 1);
+#endif
 }
 
 /*********************************************************************
@@ -409,21 +432,21 @@ uint16 OnBoard_stack_used(void)
  *********************************************************************/
 void _itoa(uint16 num, uint8 *buf, uint8 radix)
 {
-  char c,i;
-  uint8 *p, rst[5];
+  uint8 digit;
+  uint8 count = 0;
+  uint8 rst[5];
 
-  p = rst;
-  for ( i=0; i<5; i++,p++ )
+  do
   {
-    c = num % radix;  // Isolate a digit
-    *p = c + (( c < 10 ) ? '0' : '7');  // Convert to Ascii
+    digit = num % radix;  // Isolate a digit
+    rst[count++] = digit + (( digit < 10 ) ? '0' : '7');  // Convert to Ascii
     num /= radix;
-    if ( !num )
-      break;
-  }
+  } while ( num && count < sizeof(rst) );
 
-  for ( c=0 ; c<=i; c++ )
-    *buf++ = *p--;  // Reverse character order
+  while ( count > 0 )
+  {
+    *buf++ = rst[--count];
+  }
 
   *buf = '\0';
 }

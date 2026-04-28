@@ -223,6 +223,10 @@ extern uint8 znpCfg1;
 // Internal (MCU) Stack addresses
 #define CSTACK_BEG ((uint8 const *)(_Pragma("segment=\"XSTACK\"") __segment_begin("XSTACK")))
 #define CSTACK_END ((uint8 const *)(_Pragma("segment=\"XSTACK\"") __segment_end("XSTACK"))-1)
+#elif defined __SDCC
+// The SDCC ZNP wrapper places the external stack at 0x1B00..0x1EFF.
+#define CSTACK_BEG ((uint8 const XDATA *)0x1B00)
+#define CSTACK_END ((uint8 const XDATA *)0x1EFF)
 // Stack Initialization Value
 #define STACK_INIT_VALUE  0xCD
 #else

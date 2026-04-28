@@ -108,7 +108,7 @@ static CODE const macPib_t macPibDefaults =
   0,                                          /* beaconTxTime */
   0,                                          /* bsn */
 
-  {0, SADDR_MODE_EXT},                        /* coordExtendedAddress */
+  {{0}, SADDR_MODE_EXT},                        /* coordExtendedAddress */
   MAC_SHORT_ADDR_NONE,                        /* coordShortAddress */
   0,                                          /* dsn */
   FALSE,                                      /* gtsPermit */
@@ -135,7 +135,7 @@ static CODE const macPib_t macPibDefaults =
   /* Proprietary */
   0,                                          /* phyTransmitPower */
   MAC_CHAN_11,                                /* logicalChannel */
-  {0, SADDR_MODE_EXT},                        /* extendedAddress */
+  {{0}, SADDR_MODE_EXT},                        /* extendedAddress */
   1,                                          /* altBe */
   MAC_BO_NON_BEACON,                          /* deviceBeaconOrder */
   0,                                          /* power savings for rf4ce */

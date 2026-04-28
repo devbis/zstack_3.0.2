@@ -312,7 +312,11 @@ enum
  */
 
 /* State table type */
+#if defined(__SDCC)
+typedef const uint8 (* macStateTbl_t)[MAC_NUM_COLS];
+#else
 typedef const uint8 (CODE * macStateTbl_t)[MAC_NUM_COLS];
+#endif
 
 /* Event structure for API events with buffer for command frame */
 typedef struct

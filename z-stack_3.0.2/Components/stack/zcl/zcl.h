@@ -916,12 +916,20 @@ extern ZStatus_t zcl_registerPlugin( uint16 startLogCluster, uint16 endLogCluste
 /*
  *  Register Application's Command table
  */
+#if defined(__SDCC_STACK_AUTO)
+extern ZStatus_t zcl_registerCmdList( uint8 endpoint, uint8 cmdListSize, const zclCommandRec_t *newCmdList );
+#else
 extern ZStatus_t zcl_registerCmdList( uint8 endpoint, CONST uint8 cmdListSize, CONST zclCommandRec_t newCmdList[] );
+#endif
 
 /*
  *  Register Application's Attribute table
  */
+#if defined(__SDCC_STACK_AUTO)
+extern ZStatus_t zcl_registerAttrList( uint8 endpoint, uint8 numAttr, const zclAttrRec_t *attrList );
+#else
 extern ZStatus_t zcl_registerAttrList( uint8 endpoint, uint8 numAttr, CONST zclAttrRec_t attrList[] );
+#endif
 
 /*
  *  Register Application's Cluster Option table
@@ -1158,7 +1166,11 @@ extern uint8 zclFindAttrRec( uint8 endpoint, uint16 realClusterID, uint16 attrId
 /*
  *  Set attribute record list for end point
  */
+#if defined(__SDCC_STACK_AUTO)
+extern uint8 zclSetAttrRecList( uint8 endpoint, uint8 numAttr, const zclAttrRec_t *attrList );
+#else
 extern uint8 zclSetAttrRecList( uint8 endpoint, uint8 numAttr, CONST zclAttrRec_t attrList[] );
+#endif
 #endif
 
 /*

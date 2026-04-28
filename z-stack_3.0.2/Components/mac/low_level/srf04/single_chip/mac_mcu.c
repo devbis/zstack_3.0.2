@@ -185,7 +185,6 @@ MAC_INTERNAL_API void macMcuInit(void)
   if ((*(uint8 *)(P_INFOPAGE+0x03) == 0x95) || (*(uint8 *)(P_INFOPAGE+0x03) == 0x34))
   {
     /* In case the device is a 2533, just update the IVCTRL regoster which is 2533 specific */
-    #define IVCTRL          XREG( 0x6265 )
     IVCTRL = 0xF;
     CCACTRL0 = CCA_THR_CC2533; 
   }

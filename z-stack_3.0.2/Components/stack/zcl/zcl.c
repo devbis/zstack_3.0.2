@@ -822,7 +822,11 @@ ZStatus_t zcl_registerPlugin( uint16 startClusterID,
  *
  * @return      ZSuccess if OK
  */
+#if defined(__SDCC_STACK_AUTO)
+ZStatus_t zcl_registerCmdList( uint8 endpoint, uint8 cmdListSize, const zclCommandRec_t *newCmdList )
+#else
 ZStatus_t zcl_registerCmdList( uint8 endpoint, CONST uint8 cmdListSize, CONST zclCommandRec_t newCmdList[] )
+#endif
 {
   zclCmdRecsList_t *pNewItem;
   zclCmdRecsList_t *pLoop;
@@ -837,7 +841,7 @@ ZStatus_t zcl_registerCmdList( uint8 endpoint, CONST uint8 cmdListSize, CONST zc
   pNewItem->pNext = (zclCmdRecsList_t *)NULL;
   pNewItem->endpoint = endpoint;
   pNewItem->numCommands = cmdListSize;
-  pNewItem->pCmdRecs = newCmdList;
+  pNewItem->pCmdRecs = (CONST zclCommandRec_t *)newCmdList;
 
   // Find spot in list
   if ( gpCmdList == NULL )
@@ -875,7 +879,11 @@ ZStatus_t zcl_registerCmdList( uint8 endpoint, CONST uint8 cmdListSize, CONST zc
  *
  * @return      ZSuccess if OK
  */
+#if defined(__SDCC_STACK_AUTO)
+ZStatus_t zcl_registerAttrList( uint8 endpoint, uint8 numAttr, const zclAttrRec_t *newAttrList )
+#else
 ZStatus_t zcl_registerAttrList( uint8 endpoint, uint8 numAttr, CONST zclAttrRec_t newAttrList[] )
+#endif
 {
   zclAttrRecsList *pNewItem;
   zclAttrRecsList *pLoop;
@@ -891,7 +899,7 @@ ZStatus_t zcl_registerAttrList( uint8 endpoint, uint8 numAttr, CONST zclAttrRec_
   pNewItem->endpoint = endpoint;
   pNewItem->pfnReadWriteCB = NULL;
   pNewItem->numAttributes = numAttr;
-  pNewItem->attrs = newAttrList;
+  pNewItem->attrs = (CONST zclAttrRec_t *)newAttrList;
 
   // Find spot in list
   if ( attrList == NULL )
@@ -2670,14 +2678,18 @@ uint8 zclFindAttrRec( uint8 endpoint, uint16 clusterID, uint16 attrId, zclAttrRe
  *
  * @return  TRUE if successful, FALSE otherwise.
  */
+#if defined(__SDCC_STACK_AUTO)
+uint8 zclSetAttrRecList( uint8 endpoint, uint8 numAttr, const zclAttrRec_t *attrList )
+#else
 uint8 zclSetAttrRecList( uint8 endpoint, uint8 numAttr, CONST zclAttrRec_t attrList[] )
+#endif
 {
   zclAttrRecsList *pRecsList = zclFindAttrRecsList( endpoint );
 
   if ( pRecsList != NULL )
   {
     pRecsList->numAttributes = numAttr;
-    pRecsList->attrs = attrList;
+    pRecsList->attrs = (CONST zclAttrRec_t *)attrList;
     return ( TRUE );
   }
 
