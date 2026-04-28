@@ -10,6 +10,10 @@ on:
         required: false
         default: balanced
 
+env:
+  SDCC_TOOLCHAIN_ROOT: ""
+  SDCC_TOOLCHAIN_URL: "https://github.com/devbis/sdcc_iar/releases/download/20260428/sdcc-linux-amd64.tar.xz"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -50,7 +54,15 @@ jobs:
           fi
           cmake -S . -B build \
             -DZSTACK_PROFILE="$PROFILE" \
-            -DZSTACK_IMPORT_BUNDLE_DIR="$ZSTACK_IMPORT_BUNDLE_DIR"
+            -DZSTACK_IMPORT_BUNDLE_DIR="$ZSTACK_IMPORT_BUNDLE_DIR" \
+            -DSDCC_TOOLCHAIN_ROOT="$SDCC_TOOLCHAIN_ROOT" \
+            -DSDCC_TOOLCHAIN_URL="$SDCC_TOOLCHAIN_URL"
+
+      - name: Prepare SDCC Toolchain Overlay
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --build build --target znp_cc2530_with_sbl_toolchain --parallel
 
       - name: Build Firmware
         shell: bash

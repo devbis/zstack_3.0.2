@@ -24,7 +24,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../sdcc/device/include/mcs51")
 endif()
 set(
   SDCC_TOOLCHAIN_URL
-  "https://github.com/devbis/sdcc_iar/releases/download/20260428/sdcc-linux-amd64.tar.xz"
+  ""
   CACHE STRING
   "SDCC toolchain archive URL used when SDCC_TOOLCHAIN_ROOT is empty."
 )
@@ -58,6 +58,12 @@ if(NOT ZSTACK_PROFILE IN_LIST _zstack_supported_profiles)
   message(
     FATAL_ERROR
     "Unsupported ZSTACK_PROFILE='${ZSTACK_PROFILE}'. Expected one of: ${_zstack_supported_profiles}"
+  )
+endif()
+if(NOT SDCC_TOOLCHAIN_ROOT AND NOT SDCC_TOOLCHAIN_URL)
+  message(
+    FATAL_ERROR
+    "Set either SDCC_TOOLCHAIN_ROOT or SDCC_TOOLCHAIN_URL before configuring."
   )
 endif()
 
