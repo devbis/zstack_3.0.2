@@ -27,6 +27,42 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake jq patch xz-utils
 
+      - name: Prepare SDCC Toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TOOLCHAIN_WORK="$RUNNER_TEMP/sdcc-toolchain"
+          TOOLCHAIN_TARBALL="$TOOLCHAIN_WORK/sdcc-toolchain.tar.xz"
+          TOOLCHAIN_RAW="$TOOLCHAIN_WORK/raw"
+          TOOLCHAIN_OVERLAY="$TOOLCHAIN_WORK/overlay"
+          mkdir -p "$TOOLCHAIN_WORK"
+          curl -L "$SDCC_TOOLCHAIN_URL" -o "$TOOLCHAIN_TARBALL"
+          rm -rf "$TOOLCHAIN_RAW" "$TOOLCHAIN_OVERLAY"
+          mkdir -p "$TOOLCHAIN_RAW" "$TOOLCHAIN_OVERLAY"
+          tar -xf "$TOOLCHAIN_TARBALL" -C "$TOOLCHAIN_RAW"
+
+          REAL_TOOLCHAIN_ROOT=""
+          if [ -x "$TOOLCHAIN_RAW/bin/sdcc" ]; then
+            REAL_TOOLCHAIN_ROOT="$TOOLCHAIN_RAW"
+          else
+            while IFS= read -r candidate; do
+              if [ -x "$candidate/bin/sdcc" ]; then
+                REAL_TOOLCHAIN_ROOT="$candidate"
+                break
+              fi
+            done < <(find "$TOOLCHAIN_RAW" -mindepth 1 -maxdepth 2 -type d | sort)
+          fi
+
+          if [ -z "$REAL_TOOLCHAIN_ROOT" ]; then
+            echo "Unable to locate extracted SDCC toolchain root" >&2
+            exit 1
+          fi
+
+          cp -a "$REAL_TOOLCHAIN_ROOT"/. "$TOOLCHAIN_OVERLAY"/
+          cp cmake/sdcpp.in "$TOOLCHAIN_OVERLAY/bin/sdcpp"
+          chmod +x "$TOOLCHAIN_OVERLAY/bin/sdcpp"
+          echo "SDCC_TOOLCHAIN_ROOT=$TOOLCHAIN_OVERLAY" >> "$GITHUB_ENV"
+
       - name: Import IAR Project Bundle
         shell: bash
         run: |
@@ -55,14 +91,7 @@ jobs:
           cmake -S . -B build \
             -DZSTACK_PROFILE="$PROFILE" \
             -DZSTACK_IMPORT_BUNDLE_DIR="$ZSTACK_IMPORT_BUNDLE_DIR" \
-            -DSDCC_TOOLCHAIN_ROOT="$SDCC_TOOLCHAIN_ROOT" \
-            -DSDCC_TOOLCHAIN_URL="$SDCC_TOOLCHAIN_URL"
-
-      - name: Prepare SDCC Toolchain Overlay
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cmake --build build --target znp_cc2530_with_sbl_toolchain --parallel
+            -DSDCC_TOOLCHAIN_ROOT="$SDCC_TOOLCHAIN_ROOT"
 
       - name: Build Firmware
         shell: bash

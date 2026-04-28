@@ -5,29 +5,16 @@ project(zstack_sdcc NONE)
 set(ZSTACK_PROFILE "balanced" CACHE STRING "ZNP SDCC profile to build")
 set_property(CACHE ZSTACK_PROFILE PROPERTY STRINGS full balanced lean)
 
-set(_default_sdcc_toolchain_root "")
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../sdcc-build/bin/sdcc")
-  set(_default_sdcc_toolchain_root "${CMAKE_CURRENT_SOURCE_DIR}/../sdcc-build")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../sdcc-linux/bin/sdcc")
-  set(_default_sdcc_toolchain_root "${CMAKE_CURRENT_SOURCE_DIR}/../sdcc-linux")
-endif()
-
 set(
   SDCC_TOOLCHAIN_ROOT
-  "${_default_sdcc_toolchain_root}"
+  ""
   CACHE PATH
-  "Existing SDCC toolchain root. Leave empty to download the published Linux AMD64 toolchain."
+  "Existing prepared SDCC toolchain root."
 )
 set(_default_sdcc_port_include_dir "")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../sdcc/device/include/mcs51")
   set(_default_sdcc_port_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/../sdcc/device/include/mcs51")
 endif()
-set(
-  SDCC_TOOLCHAIN_URL
-  ""
-  CACHE STRING
-  "SDCC toolchain archive URL used when SDCC_TOOLCHAIN_ROOT is empty."
-)
 set(
   SDCC_PORT_INCLUDE_DIR
   "${_default_sdcc_port_include_dir}"
@@ -38,7 +25,7 @@ set(
   ZSTACK_WORK_ROOT
   "${CMAKE_BINARY_DIR}/work"
   CACHE PATH
-  "Workspace used for staged SDK copies, generated toolchain overlay, and intermediate artifacts."
+  "Workspace used for staged SDK copies and intermediate artifacts."
 )
 set(
   ZSTACK_IMPORT_BUNDLE_DIR
@@ -60,10 +47,10 @@ if(NOT ZSTACK_PROFILE IN_LIST _zstack_supported_profiles)
     "Unsupported ZSTACK_PROFILE='${ZSTACK_PROFILE}'. Expected one of: ${_zstack_supported_profiles}"
   )
 endif()
-if(NOT SDCC_TOOLCHAIN_ROOT AND NOT SDCC_TOOLCHAIN_URL)
+if(NOT SDCC_TOOLCHAIN_ROOT)
   message(
     FATAL_ERROR
-    "Set either SDCC_TOOLCHAIN_ROOT or SDCC_TOOLCHAIN_URL before configuring."
+    "Set SDCC_TOOLCHAIN_ROOT before configuring."
   )
 endif()
 
@@ -76,7 +63,6 @@ zstack_add_znp_cc2530_with_sbl_target(
   PROFILE "${ZSTACK_PROFILE}"
   SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"
   TOOLCHAIN_ROOT "${SDCC_TOOLCHAIN_ROOT}"
-  TOOLCHAIN_URL "${SDCC_TOOLCHAIN_URL}"
   PORT_INCLUDE_DIR "${SDCC_PORT_INCLUDE_DIR}"
   WORK_ROOT "${ZSTACK_WORK_ROOT}"
   IMPORT_BUNDLE_DIR "${ZSTACK_IMPORT_BUNDLE_DIR}"

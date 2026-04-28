@@ -2,10 +2,10 @@ include(CMakeParseArguments)
 
 function(zstack_add_znp_cc2530_with_sbl_target)
   set(options)
-  set(oneValueArgs NAME PROFILE SOURCE_ROOT TOOLCHAIN_ROOT TOOLCHAIN_URL PORT_INCLUDE_DIR WORK_ROOT IMPORT_BUNDLE_DIR OUTPUT_BASE_DIR PYTHON_EXECUTABLE)
+  set(oneValueArgs NAME PROFILE SOURCE_ROOT TOOLCHAIN_ROOT PORT_INCLUDE_DIR WORK_ROOT IMPORT_BUNDLE_DIR OUTPUT_BASE_DIR PYTHON_EXECUTABLE)
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "" ${ARGN})
 
-  foreach(required_arg NAME PROFILE SOURCE_ROOT TOOLCHAIN_URL WORK_ROOT OUTPUT_BASE_DIR PYTHON_EXECUTABLE)
+  foreach(required_arg NAME PROFILE SOURCE_ROOT TOOLCHAIN_ROOT WORK_ROOT OUTPUT_BASE_DIR PYTHON_EXECUTABLE)
     if(NOT ARG_${required_arg})
       message(FATAL_ERROR "zstack_add_znp_cc2530_with_sbl_target missing required argument: ${required_arg}")
     endif()
@@ -84,36 +84,10 @@ function(zstack_add_znp_cc2530_with_sbl_target)
     endif()
   endif()
 
-  set(toolchain_download_root "${work_root}/toolchain-download")
-  set(toolchain_tarball "${toolchain_download_root}/sdcc-toolchain.tar.xz")
-  set(toolchain_extract_root "${toolchain_download_root}/raw")
-  set(toolchain_overlay_root "${work_root}/sdcc-toolchain")
-  set(toolchain_stamp "${stamps_dir}/toolchain-${ARG_PROFILE}.stamp")
-
-  set(toolchain_deps
-    "${repo_root}/cmake/BootstrapSDCCToolchain.cmake"
-    "${repo_root}/cmake/sdcpp.in"
-  )
-  if(ARG_TOOLCHAIN_ROOT)
-    list(APPEND toolchain_deps "${ARG_TOOLCHAIN_ROOT}/bin/sdcc")
+  if(NOT EXISTS "${ARG_TOOLCHAIN_ROOT}/bin/sdcc")
+    message(FATAL_ERROR "SDCC_TOOLCHAIN_ROOT does not contain bin/sdcc: ${ARG_TOOLCHAIN_ROOT}")
   endif()
-
-  add_custom_command(
-    OUTPUT "${toolchain_stamp}"
-    COMMAND
-      "${CMAKE_COMMAND}"
-      -DINPUT_TOOLCHAIN_ROOT=${ARG_TOOLCHAIN_ROOT}
-      -DDOWNLOAD_URL=${ARG_TOOLCHAIN_URL}
-      -DDOWNLOAD_TARBALL=${toolchain_tarball}
-      -DDOWNLOAD_ROOT=${toolchain_extract_root}
-      -DOVERLAY_ROOT=${toolchain_overlay_root}
-      -DSDCPP_TEMPLATE=${repo_root}/cmake/sdcpp.in
-      -DSTAMP_FILE=${toolchain_stamp}
-      -P "${repo_root}/cmake/BootstrapSDCCToolchain.cmake"
-    DEPENDS ${toolchain_deps}
-    COMMENT "Preparing SDCC toolchain overlay"
-    VERBATIM
-  )
+  set(toolchain_root "${ARG_TOOLCHAIN_ROOT}")
 
   if(ARG_IMPORT_BUNDLE_DIR)
     if(NOT EXISTS "${imported_source_root}")
@@ -189,7 +163,7 @@ function(zstack_add_znp_cc2530_with_sbl_target)
   set(build_env
     "PYTHON_BIN=${ARG_PYTHON_EXECUTABLE}"
     "SDCC_BUILD_DIR=${sdcc_work_dir}"
-    "SDCC_TOOLCHAIN_DIR=${toolchain_overlay_root}"
+    "SDCC_TOOLCHAIN_DIR=${toolchain_root}"
     "MANIFEST=${imported_manifest}"
     "CFG_HEADER=${imported_cfg_header}"
     "ZNP_SDCC_PROFILE=${ARG_PROFILE}"
@@ -211,7 +185,6 @@ function(zstack_add_znp_cc2530_with_sbl_target)
     COMMAND "${CMAKE_COMMAND}" -E touch "${prepare_native_stamp}"
     DEPENDS
       "${import_stamp}"
-      "${toolchain_stamp}"
       "${imported_manifest}"
       "${imported_cfg_header}"
       "${imported_compile_plan}"
@@ -278,7 +251,6 @@ function(zstack_add_znp_cc2530_with_sbl_target)
   )
 
   add_custom_target("${ARG_NAME}" ALL DEPENDS "${prepare_native_stamp}" ${ZSTACK_NATIVE_OBJECTS})
-  add_custom_target("${ARG_NAME}_toolchain" DEPENDS "${toolchain_stamp}")
   add_custom_target("${ARG_NAME}_import" DEPENDS "${import_stamp}")
   add_custom_target("${ARG_NAME}_prepare" DEPENDS "${prepare_native_stamp}")
   add_custom_target("${ARG_NAME}_hex" DEPENDS "${hex_file}")
