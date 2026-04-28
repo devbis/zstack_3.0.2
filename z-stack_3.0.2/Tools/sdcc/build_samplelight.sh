@@ -81,6 +81,7 @@ HEADER_ALIASES=(
   "Components/mt/mt_uart.h|Components/mt/MT_UART.h"
   "Components/stack/gp/gp_common.h|Components/stack/GP/gp_common.h"
   "Components/stack/gp/gp_interface.h|Components/stack/GP/gp_interface.h"
+  "Components/stack/gp/cGP_stub.h|Components/stack/GP/cGP_stub.h"
   "Components/stack/gp/dgp_stub.h|Components/stack/GP/dGP_stub.h"
 )
 
