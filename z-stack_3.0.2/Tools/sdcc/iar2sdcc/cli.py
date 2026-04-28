@@ -19,6 +19,7 @@ if __package__ in (None, ""):
         emit_ownerless_stub,
         emit_stub_library,
     )
+    from iar2sdcc.heuristics import is_noise_symbol
     from iar2sdcc.linker import parse_undefined_globals
     from iar2sdcc.models import ModuleRecord
     from iar2sdcc.object_parser import parse_iar_object, parse_iar_object_bytes, parse_module_summary
@@ -37,6 +38,7 @@ else:
         emit_ownerless_stub,
         emit_stub_library,
     )
+    from .heuristics import is_noise_symbol
     from .linker import parse_undefined_globals
     from .models import ModuleRecord
     from .object_parser import parse_iar_object, parse_iar_object_bytes, parse_module_summary
@@ -78,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument("--manifest", type=Path, required=True)
     convert.add_argument("--out-dir", type=Path, required=True)
     convert.add_argument("--link-log", type=Path)
+    convert.add_argument("--prelink-json", type=Path)
 
     convert_object = sub.add_parser("convert-object")
     convert_object.add_argument("object", type=Path)
@@ -316,6 +319,62 @@ def resolve_log(
     }
 
 
+def resolve_prelink(
+    payload_path: Path,
+    libraries: list[Path],
+    existing_module_symbols: dict[str, dict[str, list[str]]] | None = None,
+) -> dict[str, object]:
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    references_payload = payload.get("references", {})
+    references: dict[str, list[str]] = {}
+    if isinstance(references_payload, dict):
+        for raw_symbol, raw_modules in references_payload.items():
+            if not isinstance(raw_symbol, str):
+                continue
+            symbol = normalize_symbol(raw_symbol)
+            if is_noise_symbol(symbol):
+                continue
+            modules: list[str] = []
+            if isinstance(raw_modules, list):
+                modules = sorted(str(module) for module in raw_modules if isinstance(module, str))
+            references[symbol] = modules
+    symbols_payload = payload.get("undefined_symbols", [])
+    symbols = []
+    if isinstance(symbols_payload, list):
+        for raw_symbol in symbols_payload:
+            if not isinstance(raw_symbol, str):
+                continue
+            symbol = normalize_symbol(raw_symbol)
+            if is_noise_symbol(symbol):
+                continue
+            symbols.append(symbol)
+    symbols = sorted(dict.fromkeys(symbols or references.keys()))
+    inventories = [scan_library(path) for path in libraries]
+    library_modules = {
+        inventory.library: inventory.modules
+        for inventory in inventories
+    }
+    exact_module_exports = build_library_export_index(libraries)
+    resolved_symbols = resolve_symbols(libraries, symbols)
+    module_candidates = build_module_candidates(
+        library_modules,
+        resolved_symbols,
+        exact_module_exports,
+        existing_module_symbols,
+    )
+    return {
+        "log": str(payload_path.resolve()),
+        "undefined_symbols": symbols,
+        "references": references,
+        "libraries": resolved_symbols,
+        "library_modules": library_modules,
+        "exact_module_exports": exact_module_exports,
+        "module_candidates": module_candidates,
+        "module_plan": build_module_plan(module_candidates),
+        "resolution_kind": "prelink",
+    }
+
+
 def summarize_link_resolution(link_resolution: dict[str, object]) -> dict[str, int]:
     libraries = link_resolution["libraries"]
     module_candidates = link_resolution["module_candidates"]
@@ -410,6 +469,7 @@ def convert_project(
     manifest_path: Path,
     out_dir: Path,
     link_log_path: Path | None = None,
+    prelink_payload_path: Path | None = None,
 ) -> dict[str, object]:
     project = manifest_path.stem
     manifest = load_project_manifest(manifest_path)
@@ -420,21 +480,30 @@ def convert_project(
     selected = select_modules(modules, needed_symbols=set(), forced_modules=forced_modules)
 
     workspace = ensure_out_dir(out_dir)
-    emitted = _load_existing_emitted_artifacts(workspace) if link_log_path is not None else []
+    emitted = _load_existing_emitted_artifacts(workspace) if (link_log_path is not None or prelink_payload_path is not None) else []
     emitted.extend(emit_stub_library(workspace, module.name) for module in selected)
     emitted = list(dict.fromkeys(emitted))
     manifest_required_symbols = sorted(str(symbol) for symbol in manifest.get("required_symbols", []))
     unresolved = list(manifest_required_symbols)
     link_resolution = None
     link_resolution_summary = None
-    if link_log_path is not None:
+    if link_log_path is not None and prelink_payload_path is not None:
+        raise ValueError("convert_project accepts either link_log_path or prelink_payload_path, not both")
+    if link_log_path is not None or prelink_payload_path is not None:
         library_paths = [Path(library) for library in libraries]
         existing_module_symbols = build_existing_module_symbol_index(workspace, library_paths)
-        link_resolution = resolve_log(
-            link_log_path,
-            library_paths,
-            existing_module_symbols=existing_module_symbols,
-        )
+        if link_log_path is not None:
+            link_resolution = resolve_log(
+                link_log_path,
+                library_paths,
+                existing_module_symbols=existing_module_symbols,
+            )
+        else:
+            link_resolution = resolve_prelink(
+                prelink_payload_path,
+                library_paths,
+                existing_module_symbols=existing_module_symbols,
+            )
         unresolved = sorted(str(symbol) for symbol in link_resolution["undefined_symbols"])
         link_resolution["module_slices"] = export_module_slices(workspace, link_resolution["module_plan"])
         planned_symbols: set[str] = set()
@@ -470,15 +539,16 @@ def convert_project(
             if not matches
         ]
         emitted_symbols = set(planned_symbols) | set(ownerless_symbols)
-        if ownerless_symbols:
-            emitted.append(emit_ownerless_stub(workspace, ownerless_symbols))
-        supplemental_symbols = [
-            symbol
-            for symbol in link_resolution["undefined_symbols"]
-            if symbol not in emitted_symbols
-        ]
-        if supplemental_symbols:
-            emitted.append(emit_fallback_stub(workspace, "remaining", supplemental_symbols))
+        if link_log_path is not None:
+            if ownerless_symbols:
+                emitted.append(emit_ownerless_stub(workspace, ownerless_symbols))
+            supplemental_symbols = [
+                symbol
+                for symbol in link_resolution["undefined_symbols"]
+                if symbol not in emitted_symbols
+            ]
+            if supplemental_symbols:
+                emitted.append(emit_fallback_stub(workspace, "remaining", supplemental_symbols))
         link_resolution_summary = summarize_link_resolution(link_resolution)
     emitted = list(dict.fromkeys(emitted))
 
@@ -581,7 +651,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "convert":
-        payload = convert_project(args.manifest, args.out_dir, args.link_log)
+        payload = convert_project(args.manifest, args.out_dir, args.link_log, args.prelink_json)
         print(json.dumps(payload, indent=2))
         return 0
 

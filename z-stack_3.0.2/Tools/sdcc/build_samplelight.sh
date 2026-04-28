@@ -42,6 +42,7 @@ ASLINK_AREA_BASES_SCRIPT="$SCRIPT_DIR/gen_aslink_area_bases.py"
 COMPILE_PLAN_SCRIPT="$SCRIPT_DIR/gen_compile_plan.py"
 PREPARE_SOURCE_SCRIPT="$SCRIPT_DIR/prepare_source.py"
 REMAP_BANKED_HEX_SCRIPT="$SCRIPT_DIR/remap_banked_hex.py"
+PRELINK_SYMBOLS_SCRIPT="$SCRIPT_DIR/collect_prelink_symbols.py"
 ASLINK_AREA_BASES_LK="$OUT_DIR/aslink-area-bases.lk"
 LINK_LOG="$OUT_DIR/link.log"
 LINK_REPORT_JSON="$OUT_DIR/unresolved-libraries.json"
@@ -50,6 +51,7 @@ FIRST_PASS_REPORT_JSON="$OUT_DIR/first-pass-unresolved-libraries.json"
 SECOND_PASS_STRICT_LOG="$OUT_DIR/second-pass-strict.link.log"
 SECOND_PASS_RELAXED_LOG="$OUT_DIR/second-pass-relaxed.link.log"
 FINAL_LINK_REPORT_JSON="$OUT_DIR/final-link-unresolved-libraries.json"
+PRELINK_RESOLUTION_JSON="$OUT_DIR/prelink-unresolved-libraries.json"
 NORMALIZED_MANIFEST="$OUT_DIR/manifest.normalized.json"
 COMPILE_PLAN_JSON="$OUT_DIR/compile-plan.json"
 RUNTIME_ROOT_DIR="$SCRIPT_DIR/runtime"
@@ -531,15 +533,22 @@ assemble_with_sdas8051() {
 }
 
 run_iar_converter() {
+  local prelink_json=${1:-}
   mkdir -p "$CONVERTED_DIR"
+  local converter_cmd=(
+    "$PYTHON_BIN" "$CONVERTER_CLI"
+    convert
+    --manifest "$MANIFEST"
+    --out-dir "$CONVERTED_DIR"
+  )
+  if [ -n "$prelink_json" ] && [ -f "$prelink_json" ]; then
+    converter_cmd+=(--prelink-json "$prelink_json")
+  fi
   IAR2SDCC_SDCC_BIN="$SDCC_BIN" \
   IAR2SDCC_SDAS_BIN="$SDAS8051_BIN" \
   IAR2SDCC_SDCC_MODEL="$SDCC_MODEL" \
   IAR2SDCC_SDCC_ABI="$SDCC_ABI" \
-  "$PYTHON_BIN" "$CONVERTER_CLI" \
-    convert \
-    --manifest "$MANIFEST" \
-    --out-dir "$CONVERTED_DIR" >/dev/null
+  "${converter_cmd[@]}" >/dev/null
 }
 
 append_converted_artifacts() {
@@ -553,6 +562,58 @@ append_converted_artifacts() {
     [ -n "$artifact" ] || continue
     CONVERTED_ARTIFACTS+=("$artifact")
   done < <(jq -r '.emitted_artifacts[]?' "$CONVERTED_MANIFEST")
+}
+
+runtime_provider_libs() {
+  local candidate
+  for candidate in \
+    "$RUNTIME_LIB_DIR/mcs51.lib" \
+    "$RUNTIME_LIB_DIR/libsdcc.lib" \
+    "$RUNTIME_LIB_DIR/libint.lib" \
+    "$RUNTIME_LIB_DIR/liblong.lib" \
+    "$RUNTIME_LIB_DIR/libfloat.lib"; do
+    [ -f "$candidate" ] || continue
+    printf '%s\n' "$candidate"
+  done
+}
+
+collect_prelink_symbols() {
+  local consumers=()
+  local providers=()
+  local artifact
+  local provider
+
+  for artifact in "${OBJECTS[@]}"; do
+    [ -f "$artifact" ] || continue
+    consumers+=("$artifact")
+    providers+=("$artifact")
+  done
+  for artifact in "${CONVERTED_ARTIFACTS[@]}"; do
+    [ -f "$artifact" ] || continue
+    consumers+=("$artifact")
+    providers+=("$artifact")
+  done
+  while IFS= read -r provider; do
+    [ -n "$provider" ] || continue
+    providers+=("$provider")
+  done < <(runtime_provider_libs)
+
+  if [ "${#consumers[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  local collector_cmd=(
+    "$PYTHON_BIN" "$PRELINK_SYMBOLS_SCRIPT"
+    --sdnm "$SDCC_TOOLCHAIN_DIR/bin/sdnm"
+    --output "$PRELINK_RESOLUTION_JSON"
+  )
+  for artifact in "${consumers[@]}"; do
+    collector_cmd+=(--consumer "$artifact")
+  done
+  for artifact in "${providers[@]}"; do
+    collector_cmd+=(--provider "$artifact")
+  done
+  "${collector_cmd[@]}"
 }
 
 link_with_sdcc() {
@@ -821,6 +882,11 @@ case "$BUILD_SAMPLELIGHT_MODE" in
 esac
 
 append_converted_artifacts
+collect_prelink_symbols
+if [ -f "$PRELINK_RESOLUTION_JSON" ] && [ "$(jq -r '.unresolved_symbol_count // 0' "$PRELINK_RESOLUTION_JSON")" -gt 0 ]; then
+  run_iar_converter "$PRELINK_RESOLUTION_JSON"
+  append_converted_artifacts
+fi
 
 FIRST_LINK_RC=0
 if ! link_with_sdcc; then
