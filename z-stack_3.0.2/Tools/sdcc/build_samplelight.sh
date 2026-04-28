@@ -70,6 +70,19 @@ HEADER_OVERLAYS=(
   "cc2530-zcl-sampleapps-ui-h:Projects/zstack/HomeAutomation/Source/zcl_sampleapps_ui.h"
   "cc2530-onboard-h:Projects/zstack/ZMain/TI2530ZNP/OnBoard.h|Projects/zstack/ZMain/TI2530DB/OnBoard.h"
 )
+HEADER_ALIASES=(
+  "Components/stack/af/af.h|Components/stack/af/AF.h"
+  "Components/osal/include/OSAL_NV.h|Components/osal/include/OSAL_Nv.h"
+  "Components/osal/include/osal_nv.h|Components/osal/include/OSAL_Nv.h"
+  "Components/osal/include/osal.h|Components/osal/include/OSAL.h"
+  "Projects/zstack/ZMain/TI2530ZNP/Onboard.h|Projects/zstack/ZMain/TI2530ZNP/OnBoard.h"
+  "Projects/zstack/ZMain/TI2530DB/Onboard.h|Projects/zstack/ZMain/TI2530DB/OnBoard.h"
+  "Components/zmac/ZMac.h|Components/zmac/ZMAC.h"
+  "Components/mt/mt_uart.h|Components/mt/MT_UART.h"
+  "Components/stack/gp/gp_common.h|Components/stack/GP/gp_common.h"
+  "Components/stack/gp/gp_interface.h|Components/stack/GP/gp_interface.h"
+  "Components/stack/gp/dgp_stub.h|Components/stack/GP/dGP_stub.h"
+)
 
 if [ -d "$SDCC_TOOLCHAIN_DIR/device/lib" ]; then
   DEVICE_LIB_DIR="$SDCC_TOOLCHAIN_DIR/device/lib"
@@ -360,6 +373,17 @@ prepare_header_overlays() {
   done
 }
 
+prepare_header_aliases() {
+  local entry alias_rel source_rel source_path alias_path
+  for entry in "${HEADER_ALIASES[@]}"; do
+    IFS='|' read -r alias_rel source_rel <<<"$entry"
+    source_path="$ZSTACK_DIR/$source_rel"
+    [ -f "$source_path" ] || continue
+    alias_path="$GENERATED_SRC_DIR/$alias_rel"
+    prepare_compile_source "copy" "$source_path" "$alias_path"
+  done
+}
+
 assemble_with_sdas8051() {
   local input_src=$1
   local output_obj=$2
@@ -623,6 +647,7 @@ while IFS= read -r def; do
 done < <(jq -r '.sdcc_cli_defines[]' "$MANIFEST")
 
 prepare_header_overlays
+prepare_header_aliases
 
 while IFS= read -r inc; do
   rel_inc=${inc#"$WORKSPACE_DIR"/}
