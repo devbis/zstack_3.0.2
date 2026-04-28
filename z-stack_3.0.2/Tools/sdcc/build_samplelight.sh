@@ -763,8 +763,12 @@ while IFS= read -r def; do
   SDCC_ARGS+=("-D$def")
 done < <(jq -r '.sdcc_cli_defines[]' "$MANIFEST")
 
-prepare_header_overlays
-prepare_header_aliases
+case "$BUILD_SAMPLELIGHT_MODE" in
+  full|prepare-native)
+    prepare_header_overlays
+    prepare_header_aliases
+    ;;
+esac
 
 while IFS= read -r inc; do
   rel_inc=${inc#"$WORKSPACE_DIR"/}
