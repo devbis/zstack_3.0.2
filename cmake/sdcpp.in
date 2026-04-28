@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+force_c23=0
+translated=()
+for arg in "$@"; do
+  case "$arg" in
+    --obj-ext=*)
+      ;;
+    -std=c23)
+      force_c23=1
+      translated+=("-std=c2x")
+      ;;
+    *)
+      translated+=("$arg")
+      ;;
+  esac
+done
+
+if (( force_c23 )); then
+  translated+=("-Wno-builtin-macro-redefined" "-D__STDC_VERSION__=202311L")
+fi
+
+if command -v gcc >/dev/null 2>&1; then
+  exec gcc -E -U__GNUC__ -U__GNUC_MINOR__ -U__GNUC_PATCHLEVEL__ -U__clang__ -U__llvm__ "${translated[@]}"
+fi
+
+if command -v clang >/dev/null 2>&1; then
+  exec clang -E -U__GNUC__ -U__GNUC_MINOR__ -U__GNUC_PATCHLEVEL__ -U__clang__ -U__llvm__ "${translated[@]}"
+fi
+
+if command -v cpp >/dev/null 2>&1; then
+  exec cpp "${translated[@]}"
+fi
+
+echo "error: unable to locate gcc, clang, or cpp for sdcpp shim" >&2
+exit 1

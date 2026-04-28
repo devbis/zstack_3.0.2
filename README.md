@@ -5,15 +5,31 @@ This repository vendors the original `z-stack_3.0.2` SDK tree together with the 
 Local build:
 
 ```bash
-ZNP_SDCC_PROFILE=balanced ./ci/build_znp_cc2530_with_sbl.sh
+cmake -S . -B build -DZSTACK_PROFILE=balanced
+cmake --build build
 ```
 
-By default the script downloads the Linux AMD64 SDCC toolchain release from `devbis/sdcc_iar` and writes build artifacts to `out/znp_cc2530_with_sbl/<profile>/`.
+Optional local toolchain override:
+
+```bash
+cmake -S . -B build \
+  -DZSTACK_PROFILE=balanced \
+  -DSDCC_TOOLCHAIN_ROOT=/path/to/sdcc
+cmake --build build --target znp_cc2530_with_sbl
+```
+
+By default the CMake build downloads the Linux AMD64 SDCC toolchain release from `devbis/sdcc_iar`.
+
+Artifacts are written to:
+
+```text
+build/out/znp_cc2530_with_sbl/<profile>/
+```
+
+The CMake flow stages a clean SDK copy, applies `firmware_CC2531_CC2530.patch`, prepares a derived ZNP manifest/header, creates an SDCC toolchain overlay with a compatible `sdcpp`, and then runs the existing SDCC backend on the staged tree.
 
 GitHub Actions:
 
 - workflow: `.github/workflows/build-znp-cc2530-with-sbl.yml`
 - triggers: `push`, `pull_request`, `workflow_dispatch`
-- uploaded artifacts: `out/znp_cc2530_with_sbl/`
-
-The build script stages a clean SDK copy, applies `firmware_CC2531_CC2530.patch`, and then runs `Tools/sdcc/build_znp_cc2530_with_sbl.sh` against the staged tree.
+- uploaded artifacts: `build/out/znp_cc2530_with_sbl/`

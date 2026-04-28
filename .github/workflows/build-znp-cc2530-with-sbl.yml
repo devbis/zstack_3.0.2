@@ -21,9 +21,9 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y jq patch xz-utils
+          sudo apt-get install -y cmake jq patch xz-utils
 
-      - name: Build Firmware
+      - name: Configure Firmware Build
         shell: bash
         run: |
           set -euxo pipefail
@@ -31,12 +31,17 @@ jobs:
           if [ -z "$PROFILE" ]; then
             PROFILE=balanced
           fi
-          chmod +x ./ci/build_znp_cc2530_with_sbl.sh
-          ZNP_SDCC_PROFILE="$PROFILE" ./ci/build_znp_cc2530_with_sbl.sh
+          cmake -S . -B build -DZSTACK_PROFILE="$PROFILE"
+
+      - name: Build Firmware
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --build build --parallel
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: znp-cc2530-with-sbl-${{ github.event.inputs.profile || 'balanced' }}
-          path: out/znp_cc2530_with_sbl/
+          path: build/out/znp_cc2530_with_sbl/
           if-no-files-found: error

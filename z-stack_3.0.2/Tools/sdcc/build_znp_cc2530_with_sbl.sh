@@ -15,8 +15,8 @@ if [ "$ZNP_SDCC_PROFILE" != "full" ]; then
 fi
 
 OUT_DIR=${1:-"$SDCC_BUILD_DIR/zstack-znp-cc2530-with-sbl$PROFILE_SUFFIX"}
-GENERATED_MANIFEST="$OUT_DIR/znp-cc2530-with-sbl.manifest.json"
-GENERATED_CFG_HEADER="$OUT_DIR/znp-cc2530-with-sbl-sdcc-cfg.h"
+GENERATED_MANIFEST=${MANIFEST:-"$OUT_DIR/znp-cc2530-with-sbl.manifest.json"}
+GENERATED_CFG_HEADER=${CFG_HEADER:-"$OUT_DIR/znp-cc2530-with-sbl-sdcc-cfg.h"}
 MEM_FILE="$OUT_DIR/$PROJECT_NAME.mem"
 IHX_FILE="$OUT_DIR/$PROJECT_NAME.ihx"
 HEX_FILE="$OUT_DIR/$PROJECT_NAME.hex"
@@ -25,10 +25,12 @@ CODE_FLOOR_HEX=0x2000
 
 mkdir -p "$OUT_DIR"
 
-"$PYTHON_BIN" "$SCRIPT_DIR/prepare_znp_cc2530_with_sbl.py" \
-  --profile "$ZNP_SDCC_PROFILE" \
-  --output-manifest "$GENERATED_MANIFEST" \
-  --output-header "$GENERATED_CFG_HEADER"
+if [ ! -f "$GENERATED_MANIFEST" ] || [ ! -f "$GENERATED_CFG_HEADER" ]; then
+  "$PYTHON_BIN" "$SCRIPT_DIR/prepare_znp_cc2530_with_sbl.py" \
+    --profile "$ZNP_SDCC_PROFILE" \
+    --output-manifest "$GENERATED_MANIFEST" \
+    --output-header "$GENERATED_CFG_HEADER"
+fi
 
 env \
   PROJECT_NAME="$PROJECT_NAME" \
