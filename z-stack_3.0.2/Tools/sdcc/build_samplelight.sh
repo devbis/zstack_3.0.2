@@ -24,6 +24,8 @@ REUSE_OBJECTS=${REUSE_OBJECTS:-0}
 SDCC_DEFAULT_CODESEG=${SDCC_DEFAULT_CODESEG:-}
 SDCC_PORT_INC_DIR=${SDCC_PORT_INC_DIR:-}
 PYTHON_BIN=${PYTHON_BIN:-python3}
+BUILD_SAMPLELIGHT_MODE=${BUILD_SAMPLELIGHT_MODE:-full}
+ENTRY_JSON_FILE=${ENTRY_JSON_FILE:-}
 
 SDCC_BIN="$SDCC_TOOLCHAIN_DIR/bin/sdcc"
 PACKIHX_BIN="$SDCC_TOOLCHAIN_DIR/bin/packihx"
@@ -386,6 +388,117 @@ prepare_header_aliases() {
   done
 }
 
+compute_object_path() {
+  local compile_src=$1
+  local rel_path=${compile_src#"$WORKSPACE_DIR"/}
+  case "$compile_src" in
+    *.c)
+      printf '%s\n' "$OBJ_DIR/${rel_path%.c}.rel"
+      ;;
+    *.asm)
+      printf '%s\n' "$OBJ_DIR/${rel_path%.asm}.rel"
+      ;;
+    *)
+      echo "Unsupported compile source type: $compile_src" >&2
+      exit 1
+      ;;
+  esac
+}
+
+compile_entry_json() {
+  local entry_json=$1
+  local src
+  local compile_src
+  local codeseg
+  local constseg
+  local prepare
+  local skip
+  local error
+  local rel_path
+  local prepared_src
+  local obj_path
+  local obj_dir
+
+  src=$(printf '%s\n' "$entry_json" | jq -r '.source')
+  compile_src=$(printf '%s\n' "$entry_json" | jq -r '.compile_source')
+  codeseg=$(printf '%s\n' "$entry_json" | jq -r '.codeseg // empty')
+  constseg=$(printf '%s\n' "$entry_json" | jq -r '.constseg // empty')
+  prepare=$(printf '%s\n' "$entry_json" | jq -r '.prepare // empty')
+  skip=$(printf '%s\n' "$entry_json" | jq -r '.skip')
+  error=$(printf '%s\n' "$entry_json" | jq -r '.error // empty')
+
+  if [ -n "$error" ]; then
+    echo "$error" >&2
+    exit 1
+  fi
+  if [ "$skip" = "true" ]; then
+    return 0
+  fi
+
+  rel_path=${compile_src#"$WORKSPACE_DIR"/}
+  prepared_src=$compile_src
+  if [ -n "$prepare" ]; then
+    prepared_src="$GENERATED_SRC_DIR/$rel_path"
+    prepare_compile_source "$prepare" "$compile_src" "$prepared_src"
+  fi
+
+  obj_path=$(compute_object_path "$compile_src")
+  obj_dir=$(dirname "$obj_path")
+  mkdir -p "$obj_dir"
+
+  if [ "$REUSE_OBJECTS" = "1" ] && [ -f "$obj_path" ]; then
+    OBJECTS+=("$obj_path")
+    return 0
+  fi
+
+  if [[ "$compile_src" == *.asm ]]; then
+    assemble_with_sdas8051 "$prepared_src" "$obj_path"
+  else
+    COMPILE_ARGS=("${SDCC_ARGS[@]}")
+    if [ -z "$codeseg" ] && [ -n "$SDCC_DEFAULT_CODESEG" ]; then
+      COMPILE_ARGS+=(--codeseg "$SDCC_DEFAULT_CODESEG")
+    fi
+    if [ -n "$codeseg" ]; then
+      COMPILE_ARGS+=(--codeseg "$codeseg")
+    fi
+    if [ -n "$constseg" ]; then
+      COMPILE_ARGS+=(--constseg "$constseg")
+    fi
+
+    "$SDCC_BIN" -c "${COMPILE_ARGS[@]}" -o "$obj_path" "$prepared_src"
+  fi
+  OBJECTS+=("$obj_path")
+}
+
+load_objects_from_compile_plan() {
+  OBJECTS=()
+  while IFS= read -r entry_json; do
+    local skip
+    local error
+    local compile_src
+    local obj_path
+
+    skip=$(printf '%s\n' "$entry_json" | jq -r '.skip')
+    error=$(printf '%s\n' "$entry_json" | jq -r '.error // empty')
+    compile_src=$(printf '%s\n' "$entry_json" | jq -r '.compile_source')
+
+    if [ -n "$error" ]; then
+      echo "$error" >&2
+      exit 1
+    fi
+    if [ "$skip" = "true" ]; then
+      continue
+    fi
+
+    obj_path=$(compute_object_path "$compile_src")
+    if [ ! -f "$obj_path" ]; then
+      echo "Missing object for link-only mode: $obj_path" >&2
+      exit 1
+    fi
+    OBJECTS+=("$obj_path")
+  done < <(jq -c '.[]' "$COMPILE_PLAN_JSON")
+}
+
 assemble_with_sdas8051() {
   local input_src=$1
   local output_obj=$2
@@ -619,7 +732,9 @@ rerun_converter_until_stable() {
 
 ensure_runtime_libs
 runtime_lib_flags=("-L" "$RUNTIME_LIB_DIR")
-run_iar_converter
+if [ "$BUILD_SAMPLELIGHT_MODE" != "compile-entry" ] || [ ! -f "$CONVERTED_MANIFEST" ]; then
+  run_iar_converter
+fi
 
 SDCC_ARGS=(
   -mmcs51
@@ -660,68 +775,31 @@ done < <(jq -r '.include_dirs[]' "$MANIFEST")
 OBJECTS=()
 CONVERTED_ARTIFACTS=()
 
-while IFS= read -r entry_json; do
-  src=$(printf '%s\n' "$entry_json" | jq -r '.source')
-  compile_src=$(printf '%s\n' "$entry_json" | jq -r '.compile_source')
-  codeseg=$(printf '%s\n' "$entry_json" | jq -r '.codeseg // empty')
-  constseg=$(printf '%s\n' "$entry_json" | jq -r '.constseg // empty')
-  prepare=$(printf '%s\n' "$entry_json" | jq -r '.prepare // empty')
-  skip=$(printf '%s\n' "$entry_json" | jq -r '.skip')
-  error=$(printf '%s\n' "$entry_json" | jq -r '.error // empty')
-
-  if [ -n "$error" ]; then
-    echo "$error" >&2
-    exit 1
-  fi
-  if [ "$skip" = "true" ]; then
-    continue
-  fi
-
-  rel_path=${compile_src#"$WORKSPACE_DIR"/}
-  prepared_src=$compile_src
-  if [ -n "$prepare" ]; then
-    prepared_src="$GENERATED_SRC_DIR/$rel_path"
-    prepare_compile_source "$prepare" "$compile_src" "$prepared_src"
-  fi
-
-  case "$compile_src" in
-    *.c)
-      obj_path="$OBJ_DIR/${rel_path%.c}.rel"
-      ;;
-    *.asm)
-      obj_path="$OBJ_DIR/${rel_path%.asm}.rel"
-      ;;
-    *)
-      echo "Unsupported compile source type: $compile_src" >&2
+case "$BUILD_SAMPLELIGHT_MODE" in
+  prepare-native)
+    exit 0
+    ;;
+  compile-entry)
+    if [ -z "$ENTRY_JSON_FILE" ] || [ ! -f "$ENTRY_JSON_FILE" ]; then
+      echo "compile-entry mode requires ENTRY_JSON_FILE=<path>" >&2
       exit 1
-      ;;
-  esac
-  obj_dir=$(dirname "$obj_path")
-  mkdir -p "$obj_dir"
-
-  if [ "$REUSE_OBJECTS" = "1" ] && [ -f "$obj_path" ]; then
-    OBJECTS+=("$obj_path")
-    continue
-  fi
-
-  if [[ "$compile_src" == *.asm ]]; then
-    assemble_with_sdas8051 "$prepared_src" "$obj_path"
-  else
-  COMPILE_ARGS=("${SDCC_ARGS[@]}")
-    if [ -z "$codeseg" ] && [ -n "$SDCC_DEFAULT_CODESEG" ]; then
-      COMPILE_ARGS+=(--codeseg "$SDCC_DEFAULT_CODESEG")
     fi
-    if [ -n "$codeseg" ]; then
-      COMPILE_ARGS+=(--codeseg "$codeseg")
-    fi
-    if [ -n "$constseg" ]; then
-      COMPILE_ARGS+=(--constseg "$constseg")
-    fi
-
-    "$SDCC_BIN" -c "${COMPILE_ARGS[@]}" -o "$obj_path" "$prepared_src"
-  fi
-  OBJECTS+=("$obj_path")
-done < <(jq -c '.[]' "$COMPILE_PLAN_JSON")
+    compile_entry_json "$(cat "$ENTRY_JSON_FILE")"
+    exit 0
+    ;;
+  link-only)
+    load_objects_from_compile_plan
+    ;;
+  full)
+    while IFS= read -r entry_json; do
+      compile_entry_json "$entry_json"
+    done < <(jq -c '.[]' "$COMPILE_PLAN_JSON")
+    ;;
+  *)
+    echo "Unsupported BUILD_SAMPLELIGHT_MODE: $BUILD_SAMPLELIGHT_MODE" >&2
+    exit 1
+    ;;
+esac
 
 append_converted_artifacts
 
