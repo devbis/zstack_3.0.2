@@ -45,15 +45,19 @@ if [ ! -x "$TOOLCHAIN_DIR/bin/sdcc" ]; then
   tar -xf "$TOOLCHAIN_TARBALL" -C "$TOOLCHAIN_DIR"
 fi
 
-if [ ! -x "$TOOLCHAIN_DIR/bin/sdcpp" ]; then
-  cat >"$TOOLCHAIN_DIR/bin/sdcpp" <<'EOF'
+cat >"$TOOLCHAIN_DIR/bin/sdcpp" <<'EOF'
 #!/bin/sh
 set -eu
 
+force_c23=0
 set --
 for arg in "$@"; do
   case "$arg" in
     --obj-ext=*)
+      ;;
+    -std=c23)
+      force_c23=1
+      set -- "$@" "-std=c2x"
       ;;
     *)
       set -- "$@" "$arg"
@@ -61,19 +65,26 @@ for arg in "$@"; do
   esac
 done
 
+if [ "$force_c23" -eq 1 ]; then
+  set -- "$@" "-Wno-builtin-macro-redefined" "-D__STDC_VERSION__=202311L"
+fi
+
+if command -v gcc >/dev/null 2>&1; then
+  exec gcc -E -U__GNUC__ -U__GNUC_MINOR__ -U__GNUC_PATCHLEVEL__ -U__clang__ -U__llvm__ "$@"
+fi
+
+if command -v clang >/dev/null 2>&1; then
+  exec clang -E -U__GNUC__ -U__GNUC_MINOR__ -U__GNUC_PATCHLEVEL__ -U__clang__ -U__llvm__ "$@"
+fi
+
 if command -v cpp >/dev/null 2>&1; then
   exec cpp "$@"
 fi
 
-if command -v clang >/dev/null 2>&1; then
-  exec clang -E "$@"
-fi
-
-echo "error: unable to locate cpp or clang for sdcpp shim" >&2
+echo "error: unable to locate gcc, clang, or cpp for sdcpp shim" >&2
 exit 1
 EOF
-  chmod +x "$TOOLCHAIN_DIR/bin/sdcpp"
-fi
+chmod +x "$TOOLCHAIN_DIR/bin/sdcpp"
 
 export PATH="$TOOLCHAIN_DIR/bin:$PATH"
 
