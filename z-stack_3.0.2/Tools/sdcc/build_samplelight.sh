@@ -374,12 +374,13 @@ prepare_header_overlays() {
 }
 
 prepare_header_aliases() {
-  local entry alias_rel source_rel source_path alias_path
+  local entry alias_rel source_rel source_path alias_path sdk_rel_root
+  sdk_rel_root=${ZSTACK_DIR#"$WORKSPACE_DIR"/}
   for entry in "${HEADER_ALIASES[@]}"; do
     IFS='|' read -r alias_rel source_rel <<<"$entry"
     source_path="$ZSTACK_DIR/$source_rel"
     [ -f "$source_path" ] || continue
-    alias_path="$GENERATED_SRC_DIR/$alias_rel"
+    alias_path="$GENERATED_SRC_DIR/$sdk_rel_root/$alias_rel"
     prepare_compile_source "copy" "$source_path" "$alias_path"
   done
 }
