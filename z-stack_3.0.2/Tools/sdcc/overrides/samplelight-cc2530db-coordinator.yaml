@@ -1,0 +1,5 @@
+# force-includes for the first converter milestone
+- AddrMgr
+- hal_aes
+- mac_beacon
+
