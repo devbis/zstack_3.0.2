@@ -7,14 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-
-def _object_relpath(compile_source: Path, workspace_root: Path) -> Path:
-    rel_path = compile_source.resolve().relative_to(workspace_root.resolve())
-    if compile_source.suffix == ".c":
-        return rel_path.with_suffix(".rel")
-    if compile_source.suffix == ".asm":
-        return rel_path.with_suffix(".rel")
-    raise ValueError(f"Unsupported compile source type: {compile_source}")
+from object_path import compute_object_relpath
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -45,7 +38,7 @@ def generate_native_plan(
             raise SystemExit(f"compile_plan[{index}] missing compile_source")
 
         compile_source = Path(compile_source_value)
-        object_path = obj_dir / _object_relpath(compile_source, workspace_root)
+        object_path = obj_dir / compute_object_relpath(compile_source, workspace_root)
         entry_path = entries_dir / f"{index:03d}.json"
         _write_json(entry_path, item)
         entries.append(

@@ -44,6 +44,7 @@ COMPILE_PLAN_SCRIPT="$SCRIPT_DIR/gen_compile_plan.py"
 PREPARE_SOURCE_SCRIPT="$SCRIPT_DIR/prepare_source.py"
 REMAP_BANKED_HEX_SCRIPT="$SCRIPT_DIR/remap_banked_hex.py"
 PRELINK_SYMBOLS_SCRIPT="$SCRIPT_DIR/collect_prelink_symbols.py"
+OBJECT_PATH_SCRIPT="$SCRIPT_DIR/object_path.py"
 ASLINK_AREA_BASES_LK="$OUT_DIR/aslink-area-bases.lk"
 LINK_LOG="$OUT_DIR/link.log"
 LINK_REPORT_JSON="$OUT_DIR/unresolved-libraries.json"
@@ -419,19 +420,10 @@ prepare_header_aliases() {
 
 compute_object_path() {
   local compile_src=$1
-  local rel_path=${compile_src#"$WORKSPACE_DIR"/}
-  case "$compile_src" in
-    *.c)
-      printf '%s\n' "$OBJ_DIR/${rel_path%.c}.rel"
-      ;;
-    *.asm)
-      printf '%s\n' "$OBJ_DIR/${rel_path%.asm}.rel"
-      ;;
-    *)
-      echo "Unsupported compile source type: $compile_src" >&2
-      exit 1
-      ;;
-  esac
+  "$PYTHON_BIN" "$OBJECT_PATH_SCRIPT" \
+    --compile-source "$compile_src" \
+    --workspace-root "$WORKSPACE_DIR" \
+    --obj-dir "$OBJ_DIR"
 }
 
 compile_entry_json() {
@@ -606,12 +598,12 @@ collect_prelink_symbols() {
   local artifact
   local provider
 
-  for artifact in "${OBJECTS[@]}"; do
+  for artifact in "${OBJECTS[@]-}"; do
     [ -f "$artifact" ] || continue
     consumers+=("$artifact")
     providers+=("$artifact")
   done
-  for artifact in "${CONVERTED_ARTIFACTS[@]}"; do
+  for artifact in "${CONVERTED_ARTIFACTS[@]-}"; do
     [ -f "$artifact" ] || continue
     consumers+=("$artifact")
     providers+=("$artifact")
