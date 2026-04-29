@@ -52,6 +52,8 @@ SECOND_PASS_STRICT_LOG="$OUT_DIR/second-pass-strict.link.log"
 SECOND_PASS_RELAXED_LOG="$OUT_DIR/second-pass-relaxed.link.log"
 FINAL_LINK_REPORT_JSON="$OUT_DIR/final-link-unresolved-libraries.json"
 PRELINK_RESOLUTION_JSON="$OUT_DIR/prelink-unresolved-libraries.json"
+BUILD_SUMMARY_JSON="$OUT_DIR/build-summary.json"
+BUILD_SUMMARY_TXT="$OUT_DIR/build-summary.txt"
 NORMALIZED_MANIFEST="$OUT_DIR/manifest.normalized.json"
 COMPILE_PLAN_JSON="$OUT_DIR/compile-plan.json"
 RUNTIME_ROOT_DIR="$SCRIPT_DIR/runtime"
@@ -212,6 +214,15 @@ fi
 
 mkdir -p "$OBJ_DIR"
 rm -f "$IHX_FILE" "$HEX_FILE" "$LOGICAL_HEX_FILE"
+
+PRELINK_CONVERTER_USED=0
+PRELINK_UNRESOLVED_COUNT=0
+PRELINK_PLANNED_MODULES=0
+PRELINK_EMITTED_ARTIFACTS=0
+FALLBACK_USED=0
+FIRST_LINK_RC=0
+FIRST_LINK_SIGNATURE="not-run"
+FINAL_LINK_SIGNATURE="not-run"
 
 case "$BUILD_SAMPLELIGHT_MODE" in
   full|prepare-native)
@@ -616,6 +627,26 @@ collect_prelink_symbols() {
   "${collector_cmd[@]}"
 }
 
+capture_prelink_metrics() {
+  if [ -f "$PRELINK_RESOLUTION_JSON" ]; then
+    PRELINK_UNRESOLVED_COUNT=$(jq -r '.unresolved_symbol_count // 0' "$PRELINK_RESOLUTION_JSON")
+  else
+    PRELINK_UNRESOLVED_COUNT=0
+  fi
+
+  if [ -f "$CONVERTED_MODULE_PLAN" ]; then
+    PRELINK_PLANNED_MODULES=$(jq -r '.summary.planned_modules // 0' "$CONVERTED_MODULE_PLAN")
+  else
+    PRELINK_PLANNED_MODULES=0
+  fi
+
+  if [ -f "$CONVERTED_MANIFEST" ]; then
+    PRELINK_EMITTED_ARTIFACTS=$(jq -r '(.emitted_artifacts // []) | length' "$CONVERTED_MANIFEST")
+  else
+    PRELINK_EMITTED_ARTIFACTS=0
+  fi
+}
+
 link_with_sdcc() {
   local link_cmd=("$SDCC_BIN" -mmcs51 "$MODEL_FLAG")
 
@@ -781,6 +812,73 @@ print(f"{undefined}:{multiple}")
 PY
 }
 
+write_build_summary() {
+  local status=$1
+  local final_signature=${2:-$FINAL_LINK_SIGNATURE}
+  local first_signature=${3:-$FIRST_LINK_SIGNATURE}
+  local first_rc=${4:-$FIRST_LINK_RC}
+
+  mkdir -p "$OUT_DIR"
+  env \
+    BUILD_SUMMARY_STATUS="$status" \
+    BUILD_SAMPLELIGHT_MODE="$BUILD_SAMPLELIGHT_MODE" \
+    PROJECT_NAME="$PROJECT_NAME" \
+    ZNP_SDCC_PROFILE="${ZNP_SDCC_PROFILE:-}" \
+    PRELINK_CONVERTER_USED="$PRELINK_CONVERTER_USED" \
+    PRELINK_UNRESOLVED_COUNT="$PRELINK_UNRESOLVED_COUNT" \
+    PRELINK_PLANNED_MODULES="$PRELINK_PLANNED_MODULES" \
+    PRELINK_EMITTED_ARTIFACTS="$PRELINK_EMITTED_ARTIFACTS" \
+    FALLBACK_USED="$FALLBACK_USED" \
+    FIRST_LINK_RC="$first_rc" \
+    FIRST_LINK_SIGNATURE="$first_signature" \
+    FINAL_LINK_SIGNATURE="$final_signature" \
+    IHX_FILE="$IHX_FILE" \
+    HEX_FILE="$HEX_FILE" \
+    "$PYTHON_BIN" - "$BUILD_SUMMARY_JSON" "$BUILD_SUMMARY_TXT" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+summary_json = Path(sys.argv[1])
+summary_txt = Path(sys.argv[2])
+
+payload = {
+    "status": os.environ.get("BUILD_SUMMARY_STATUS", "unknown"),
+    "build_mode": os.environ.get("BUILD_SAMPLELIGHT_MODE", ""),
+    "project_name": os.environ.get("PROJECT_NAME", ""),
+    "profile": os.environ.get("ZNP_SDCC_PROFILE", ""),
+    "prelink_converter_used": os.environ.get("PRELINK_CONVERTER_USED", "0") == "1",
+    "prelink_unresolved_symbol_count": int(os.environ.get("PRELINK_UNRESOLVED_COUNT", "0")),
+    "prelink_planned_module_count": int(os.environ.get("PRELINK_PLANNED_MODULES", "0")),
+    "prelink_emitted_artifact_count": int(os.environ.get("PRELINK_EMITTED_ARTIFACTS", "0")),
+    "fallback_used": os.environ.get("FALLBACK_USED", "0") == "1",
+    "first_link_rc": int(os.environ.get("FIRST_LINK_RC", "0")),
+    "first_link_signature": os.environ.get("FIRST_LINK_SIGNATURE", "not-run"),
+    "final_link_signature": os.environ.get("FINAL_LINK_SIGNATURE", "not-run"),
+    "ihx_file": os.environ.get("IHX_FILE", ""),
+    "hex_file": os.environ.get("HEX_FILE", ""),
+}
+
+summary_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+lines = [
+    f"status={payload['status']}",
+    f"build_mode={payload['build_mode']}",
+    f"project={payload['project_name']}",
+    f"profile={payload['profile']}",
+    f"prelink_converter_used={'yes' if payload['prelink_converter_used'] else 'no'}",
+    f"prelink_unresolved_symbol_count={payload['prelink_unresolved_symbol_count']}",
+    f"prelink_planned_module_count={payload['prelink_planned_module_count']}",
+    f"prelink_emitted_artifact_count={payload['prelink_emitted_artifact_count']}",
+    f"fallback_used={'yes' if payload['fallback_used'] else 'no'}",
+    f"first_link_rc={payload['first_link_rc']}",
+    f"first_link_signature={payload['first_link_signature']}",
+    f"final_link_signature={payload['final_link_signature']}",
+]
+summary_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+}
+
 rerun_converter_until_stable() {
   local max_passes=${1:-8}
   local pass_index=3
@@ -885,15 +983,18 @@ append_converted_artifacts
 collect_prelink_symbols
 if [ -f "$PRELINK_RESOLUTION_JSON" ] && [ "$(jq -r '.unresolved_symbol_count // 0' "$PRELINK_RESOLUTION_JSON")" -gt 0 ]; then
   run_iar_converter "$PRELINK_RESOLUTION_JSON"
+  PRELINK_CONVERTER_USED=1
   append_converted_artifacts
+  capture_prelink_metrics
 fi
 
-FIRST_LINK_RC=0
 if ! link_with_sdcc; then
   FIRST_LINK_RC=$?
 fi
+FIRST_LINK_SIGNATURE=$(current_link_signature)
 
-if [ "$FIRST_LINK_RC" -ne 0 ] || [ "$(current_link_signature)" != "0:0" ]; then
+if [ "$FIRST_LINK_RC" -ne 0 ] || [ "$FIRST_LINK_SIGNATURE" != "0:0" ]; then
+  FALLBACK_USED=1
   cp "$LINK_LOG" "$FIRST_PASS_LINK_LOG"
 
   if [ "$FIRST_LINK_RC" -ne 0 ]; then
@@ -922,9 +1023,13 @@ if [ "$FIRST_LINK_RC" -ne 0 ] || [ "$(current_link_signature)" != "0:0" ]; then
   rerun_converter_until_stable 8
 fi
 
-if [ "$(current_link_signature)" != "0:0" ]; then
+FINAL_LINK_SIGNATURE=$(current_link_signature)
+
+if [ "$FINAL_LINK_SIGNATURE" != "0:0" ]; then
+  BUILD_SUMMARY_STATUS="failed"
+  write_build_summary "$BUILD_SUMMARY_STATUS" "$FINAL_LINK_SIGNATURE" "$FIRST_LINK_SIGNATURE" "$FIRST_LINK_RC"
   cat "$LINK_LOG" >&2
-  echo "Link completed with unresolved or multiply-defined symbols: $(current_link_signature)" >&2
+  echo "Link completed with unresolved or multiply-defined symbols: $FINAL_LINK_SIGNATURE" >&2
   exit 1
 fi
 
@@ -943,6 +1048,10 @@ fi
   --manifest "$MANIFEST" \
   --input-hex "$LOGICAL_HEX_FILE" \
   --output-hex "$HEX_FILE" >/dev/null
+
+BUILD_SUMMARY_STATUS="success"
+write_build_summary "$BUILD_SUMMARY_STATUS" "$FINAL_LINK_SIGNATURE" "$FIRST_LINK_SIGNATURE" "$FIRST_LINK_RC"
+cat "$BUILD_SUMMARY_TXT"
 
 echo "IHX: $IHX_FILE"
 echo "Logical HEX: $LOGICAL_HEX_FILE"

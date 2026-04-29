@@ -105,6 +105,21 @@ jobs:
           set -euxo pipefail
           cmake --build build --target znp_cc2530_with_sbl_hex --parallel
 
+      - name: Print Build Summary
+        shell: bash
+        run: |
+          set -euxo pipefail
+          PROFILE="${{ github.event.inputs.profile }}"
+          if [ -z "$PROFILE" ]; then
+            PROFILE=balanced
+          fi
+          SUMMARY=build/out/znp_cc2530_with_sbl/"$PROFILE"/build-summary.txt
+          if [ -f "$SUMMARY" ]; then
+            cat "$SUMMARY"
+          else
+            echo "Build summary not found: $SUMMARY" >&2
+          fi
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
