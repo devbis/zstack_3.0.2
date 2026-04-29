@@ -659,6 +659,54 @@ capture_prelink_metrics() {
   fi
 }
 
+current_prelink_signature() {
+  if [ ! -f "$PRELINK_RESOLUTION_JSON" ]; then
+    printf 'missing\n'
+    return 0
+  fi
+  "$PYTHON_BIN" - "$PRELINK_RESOLUTION_JSON" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+symbols = sorted(str(symbol) for symbol in payload.get("unresolved_symbols", []))
+print(f"{len(symbols)}:{'|'.join(symbols)}")
+PY
+}
+
+run_prelink_converter_until_stable() {
+  local max_passes=${1:-4}
+  local pass_index=1
+  local previous_signature=""
+
+  while [ "$pass_index" -le "$max_passes" ]; do
+    collect_prelink_symbols
+    if [ ! -f "$PRELINK_RESOLUTION_JSON" ]; then
+      break
+    fi
+
+    local unresolved_count
+    unresolved_count=$(jq -r '.unresolved_symbol_count // 0' "$PRELINK_RESOLUTION_JSON")
+    if [ "${unresolved_count:-0}" -le 0 ]; then
+      break
+    fi
+
+    local signature
+    signature=$(current_prelink_signature)
+    if [ -n "$previous_signature" ] && [ "$signature" = "$previous_signature" ]; then
+      break
+    fi
+    previous_signature="$signature"
+
+    run_iar_converter "$PRELINK_RESOLUTION_JSON"
+    PRELINK_CONVERTER_USED=1
+    append_converted_artifacts
+    capture_prelink_metrics
+    pass_index=$((pass_index + 1))
+  done
+}
+
 link_with_sdcc() {
   local link_cmd=("$SDCC_BIN" -mmcs51 "$MODEL_FLAG")
 
@@ -993,12 +1041,9 @@ case "$BUILD_SAMPLELIGHT_MODE" in
 esac
 
 append_converted_artifacts
-collect_prelink_symbols
-if [ -f "$PRELINK_RESOLUTION_JSON" ] && [ "$(jq -r '.unresolved_symbol_count // 0' "$PRELINK_RESOLUTION_JSON")" -gt 0 ]; then
-  run_iar_converter "$PRELINK_RESOLUTION_JSON"
-  PRELINK_CONVERTER_USED=1
-  append_converted_artifacts
-  capture_prelink_metrics
+run_prelink_converter_until_stable 4
+capture_prelink_metrics
+if [ "$PRELINK_CONVERTER_USED" -eq 1 ] || [ -f "$PRELINK_RESOLUTION_JSON" ]; then
   snapshot_converter_state prelink
 fi
 
