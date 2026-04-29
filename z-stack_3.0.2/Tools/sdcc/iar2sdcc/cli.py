@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -394,6 +395,152 @@ def summarize_link_resolution(link_resolution: dict[str, object]) -> dict[str, i
     }
 
 
+def _base_symbol(symbol: str) -> str:
+    return re.sub(r"_PARM_[0-9]+$", "", symbol)
+
+
+def _load_module_summary(summary_path: str) -> dict[str, object]:
+    return json.loads(Path(summary_path).read_text(encoding="utf-8"))
+
+
+def _known_defined_symbols_from_prelink(payload_path: Path | None) -> set[str]:
+    if payload_path is None or not payload_path.exists():
+        return set()
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    symbols = payload.get("defined_symbols", [])
+    if not isinstance(symbols, list):
+        return set()
+    return {
+        normalize_symbol(symbol)
+        for symbol in symbols
+        if isinstance(symbol, str) and normalize_symbol(symbol)
+    }
+
+
+def _known_existing_symbols(existing_module_symbols: dict[str, dict[str, list[str]]] | None) -> set[str]:
+    known: set[str] = set()
+    if existing_module_symbols is None:
+        return known
+    for symbols in existing_module_symbols.values():
+        known.update(symbols.keys())
+    return known
+
+
+def _merge_module_plan_entry(
+    module_plan: dict[str, list[dict[str, object]]],
+    library: str,
+    module: str,
+    symbol: str,
+) -> bool:
+    records = module_plan.setdefault(library, [])
+    for record in records:
+        if record.get("module") != module:
+            continue
+        symbols = record.setdefault("symbols", [])
+        if symbol not in symbols:
+            symbols.append(symbol)
+            record["symbols"] = sorted(set(str(item) for item in symbols))
+            record["symbol_count"] = len(record["symbols"])
+            return True
+        return False
+    records.append(
+        {
+            "module": module,
+            "symbol_count": 1,
+            "symbols": [symbol],
+        }
+    )
+    records.sort(key=lambda item: (-int(item["symbol_count"]), str(item["module"])))
+    return True
+
+
+def _choose_owner_module(
+    symbol: str,
+    owner_map: dict[str, dict[str, list[str]]],
+    selected_libraries: set[str],
+) -> tuple[str, str] | None:
+    candidates = owner_map.get(symbol)
+    if candidates is None:
+        base_symbol = _base_symbol(symbol)
+        if base_symbol != symbol:
+            candidates = owner_map.get(base_symbol)
+    if not candidates:
+        return None
+
+    preferred_libraries = [library for library in sorted(candidates) if library in selected_libraries]
+    if not preferred_libraries:
+        preferred_libraries = sorted(candidates)
+    library = preferred_libraries[0]
+    modules = candidates[library]
+    if not modules:
+        return None
+    return library, modules[0]
+
+
+def expand_module_plan_from_slices(
+    workspace: Path,
+    module_plan: dict[str, list[dict[str, object]]],
+    *,
+    exact_module_exports: dict[str, dict[str, list[str]]],
+    known_defined_symbols: set[str],
+    existing_module_symbols: dict[str, dict[str, list[str]]] | None = None,
+    max_passes: int = 8,
+) -> tuple[dict[str, list[dict[str, object]]], dict[str, list[dict[str, object]]]]:
+    expanded = {
+        library: [
+            {
+                "module": str(record["module"]),
+                "symbol_count": int(record["symbol_count"]),
+                "symbols": [str(symbol) for symbol in record["symbols"]],
+            }
+            for record in records
+        ]
+        for library, records in module_plan.items()
+    }
+    owner_map: dict[str, dict[str, list[str]]] = {}
+    for library, symbols in exact_module_exports.items():
+        for symbol, modules in symbols.items():
+            owner_map.setdefault(symbol, {})[library] = list(modules)
+
+    for _ in range(max_passes):
+        module_slices = export_module_slices(workspace, expanded)
+        selected_libraries = set(expanded)
+        selected_exports = set(known_defined_symbols) | _known_existing_symbols(existing_module_symbols)
+        processed_modules: list[tuple[str, dict[str, object], dict[str, object]]] = []
+        for library, entries in module_slices.items():
+            for entry in entries:
+                summary = _load_module_summary(str(entry["summary_path"]))
+                exports = summary.get("exports", [])
+                if isinstance(exports, list):
+                    selected_exports.update(
+                        normalize_symbol(symbol)
+                        for symbol in exports
+                        if isinstance(symbol, str) and normalize_symbol(symbol)
+                    )
+                processed_modules.append((library, entry, summary))
+
+        changed = False
+        for _, _, summary in processed_modules:
+            imports = summary.get("imports", [])
+            if not isinstance(imports, list):
+                continue
+            for raw_symbol in imports:
+                if not isinstance(raw_symbol, str):
+                    continue
+                symbol = normalize_symbol(raw_symbol)
+                if not symbol or symbol in selected_exports or is_noise_symbol(symbol):
+                    continue
+                owner = _choose_owner_module(symbol, owner_map, selected_libraries)
+                if owner is None:
+                    continue
+                owner_library, owner_module = owner
+                if _merge_module_plan_entry(expanded, owner_library, owner_module, symbol):
+                    changed = True
+        if not changed:
+            return expanded, module_slices
+    return expanded, export_module_slices(workspace, expanded)
+
+
 def _convert_module_slice(
     workspace: Path,
     source_library: str,
@@ -505,7 +652,14 @@ def convert_project(
                 existing_module_symbols=existing_module_symbols,
             )
         unresolved = sorted(str(symbol) for symbol in link_resolution["undefined_symbols"])
-        link_resolution["module_slices"] = export_module_slices(workspace, link_resolution["module_plan"])
+        known_defined_symbols = _known_defined_symbols_from_prelink(prelink_payload_path)
+        link_resolution["module_plan"], link_resolution["module_slices"] = expand_module_plan_from_slices(
+            workspace,
+            link_resolution["module_plan"],
+            exact_module_exports=link_resolution["exact_module_exports"],
+            known_defined_symbols=known_defined_symbols,
+            existing_module_symbols=existing_module_symbols,
+        )
         planned_symbols: set[str] = set()
         for library, plan_entries in link_resolution["module_plan"].items():
             slice_entries = {

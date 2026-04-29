@@ -88,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         "consumers": [str(path.resolve()) for path in args.consumer if path.exists()],
         "providers": [str(path.resolve()) for path in args.provider if path.exists()],
         "defined_symbol_count": len(defined),
+        "defined_symbols": sorted(defined),
         "undefined_symbol_count": len(references),
         "unresolved_symbol_count": len(unresolved),
         "undefined_symbols": unresolved,
