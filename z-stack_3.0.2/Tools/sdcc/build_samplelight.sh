@@ -670,7 +670,13 @@ import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-symbols = sorted(str(symbol) for symbol in payload.get("unresolved_symbols", []))
+symbols = sorted(
+    str(symbol)
+    for symbol in payload.get(
+        "undefined_symbols",
+        payload.get("unresolved_symbols", []),
+    )
+)
 print(f"{len(symbols)}:{'|'.join(symbols)}")
 PY
 }
