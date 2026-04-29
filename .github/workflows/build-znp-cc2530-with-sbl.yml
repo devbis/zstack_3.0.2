@@ -12,7 +12,7 @@ on:
 
 env:
   SDCC_TOOLCHAIN_ROOT: ""
-  SDCC_TOOLCHAIN_URL: "https://github.com/devbis/sdcc_iar/releases/download/20260428/sdcc-linux-amd64.tar.xz"
+  SDCC_TOOLCHAIN_URL: "https://github.com/devbis/sdcc_iar/releases/download/toolchain-build-25099392168/sdcc-linux-amd64.tar.xz"
 
 jobs:
   build:
