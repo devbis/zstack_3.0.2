@@ -46,7 +46,6 @@ env \
   SDCC_XRAM_LOC=0x0001 \
   SDCC_XRAM_SIZE=0x1AFF \
   SDCC_XSTACK_LOC=0x1B00 \
-  CONVERTED_DIR="$SDCC_BUILD_DIR/iar-converted/znp-cc2530-with-sbl$PROFILE_SUFFIX" \
   RELAX_MEMORY=0 \
   bash "$SCRIPT_DIR/build_samplelight.sh" "$OUT_DIR"
 

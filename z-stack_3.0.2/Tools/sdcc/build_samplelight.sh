@@ -35,6 +35,7 @@ MODEL_FLAG="--model-$SDCC_MODEL"
 IAR_LIB_INSPECTOR="$SCRIPT_DIR/inspect_iar_lib.py"
 CONVERTER_CLI="$SCRIPT_DIR/iar2sdcc/cli.py"
 CONVERTED_DIR="${CONVERTED_DIR:-$OUT_DIR/iar-converted}"
+CONVERTED_SNAPSHOTS_DIR="$OUT_DIR/iar-converted-snapshots"
 RELAX_MEMORY="${RELAX_MEMORY:-auto}"
 CONVERTED_MANIFEST="$CONVERTED_DIR/manifest.json"
 CONVERTED_MODULE_PLAN="$CONVERTED_DIR/module-plan.json"
@@ -575,6 +576,17 @@ append_converted_artifacts() {
   done < <(jq -r '.emitted_artifacts[]?' "$CONVERTED_MANIFEST")
 }
 
+snapshot_converter_state() {
+  local phase=$1
+  local snapshot_dir="$CONVERTED_SNAPSHOTS_DIR/$phase"
+
+  [ -d "$CONVERTED_DIR" ] || return 0
+
+  rm -rf "$snapshot_dir"
+  mkdir -p "$snapshot_dir"
+  cp -a "$CONVERTED_DIR"/. "$snapshot_dir"/
+}
+
 runtime_provider_libs() {
   local candidate
   for candidate in \
@@ -908,6 +920,7 @@ ensure_runtime_libs
 runtime_lib_flags=("-L" "$RUNTIME_LIB_DIR")
 if [ "$BUILD_SAMPLELIGHT_MODE" != "compile-entry" ] || [ ! -f "$CONVERTED_MANIFEST" ]; then
   run_iar_converter
+  snapshot_converter_state baseline
 fi
 
 SDCC_ARGS=(
@@ -986,6 +999,7 @@ if [ -f "$PRELINK_RESOLUTION_JSON" ] && [ "$(jq -r '.unresolved_symbol_count // 
   PRELINK_CONVERTER_USED=1
   append_converted_artifacts
   capture_prelink_metrics
+  snapshot_converter_state prelink
 fi
 
 if ! link_with_sdcc; then
@@ -1020,10 +1034,12 @@ if [ "$FIRST_LINK_RC" -ne 0 ] || [ "$FIRST_LINK_SIGNATURE" != "0:0" ]; then
   fi
 
   emit_link_failure_report "$FIRST_PASS_LINK_LOG" "$FIRST_PASS_REPORT_JSON"
+  snapshot_converter_state first-pass
   rerun_converter_until_stable 8
 fi
 
 FINAL_LINK_SIGNATURE=$(current_link_signature)
+snapshot_converter_state final
 
 if [ "$FINAL_LINK_SIGNATURE" != "0:0" ]; then
   BUILD_SUMMARY_STATUS="failed"
