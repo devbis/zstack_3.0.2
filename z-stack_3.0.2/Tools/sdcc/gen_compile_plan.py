@@ -37,6 +37,18 @@ SUBSTITUTIONS = {
     "Components/stack/sapi/sapi.c": {
         "prepare": "cc2530-sapi",
     },
+    "Components/stack/zcl/zcl.c": {
+        "prepare": "copy",
+    },
+    "Components/stack/zcl/zcl_green_power.c": {
+        "prepare": "cc2530-zcl-green-power",
+    },
+    "Components/stack/bdb/bdb_FindingAndBinding.c": {
+        "prepare": "cc2530-bdb-finding-binding",
+    },
+    "Components/stack/bdb/bdb_Reporting.c": {
+        "prepare": "cc2530-bdb-reporting",
+    },
     "Projects/zstack/HomeAutomation/SampleLight/Source/zcl_samplelight.c": {
         "prepare": "cc2530-zcl-samplelight",
     },
@@ -54,6 +66,11 @@ CHIPCON_CSTARTUP_SUBSTITUTION = {
     "skip": True,
     "skip_reason": "replaced by SDCC startup plus __sdcc_external_startup()",
 }
+
+
+def _uses_banked_code_model(manifest: dict[str, Any]) -> bool:
+    states = manifest.get("code_model_state", [])
+    return any(str(state) == "2" for state in states)
 
 
 def _default_substitution(source_rel: str) -> dict[str, Any]:
@@ -90,12 +107,14 @@ def _build_entry(
     compile_source: Path,
     substitution: dict[str, Any],
     override: dict[str, Any],
+    default_codeseg: str | None,
 ) -> dict[str, Any]:
     entry = {
         "source": str(source_path),
         "compile_source": str(compile_source),
-        "codeseg": override.get("codeseg"),
+        "codeseg": override.get("codeseg", default_codeseg),
         "constseg": override.get("constseg"),
+        "sdcc_extra_args": override.get("sdcc_extra_args"),
         "prepare": substitution.get("prepare"),
         "skip": bool(substitution.get("skip", False)),
         "skip_reason": substitution.get("skip_reason"),
@@ -110,6 +129,7 @@ def _build_entry(
 def _extra_source_entries(
     manifest: dict[str, Any],
     overrides: dict[str, dict[str, Any]],
+    default_codeseg: str | None,
 ) -> list[dict[str, Any]]:
     extra_entries: list[dict[str, Any]] = []
     for item in manifest.get("sdcc_extra_sources", []):
@@ -138,6 +158,7 @@ def _extra_source_entries(
                 compile_source=compile_source,
                 substitution=substitution,
                 override=override,
+                default_codeseg=default_codeseg if compile_source.suffix == ".c" else None,
             )
         )
     return extra_entries
@@ -146,6 +167,7 @@ def _extra_source_entries(
 def build_compile_plan(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     repo_root = Path(manifest["repo_root"])
     overrides = _override_map(manifest)
+    banked_default_codeseg = "BANKED_CODE" if _uses_banked_code_model(manifest) else None
     plan: list[dict[str, Any]] = []
 
     for source in manifest.get("source_files", []):
@@ -167,10 +189,11 @@ def build_compile_plan(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                 compile_source=compile_source,
                 substitution=substitution,
                 override=override,
+                default_codeseg=banked_default_codeseg if compile_source.suffix == ".c" else None,
             )
         )
 
-    plan.extend(_extra_source_entries(manifest, overrides))
+    plan.extend(_extra_source_entries(manifest, overrides, banked_default_codeseg))
     return plan
 
 

@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from pathlib import Path
 
 
 def compute_object_relpath(compile_source: Path, workspace_root: Path) -> Path:
-    rel_path = compile_source.resolve().relative_to(workspace_root.resolve())
+    resolved_source = compile_source.resolve()
+    try:
+        rel_path = resolved_source.relative_to(workspace_root.resolve())
+    except ValueError:
+        digest = hashlib.sha1(str(resolved_source).encode("utf-8")).hexdigest()[:12]
+        rel_path = Path("external") / digest / resolved_source.name
     if compile_source.suffix == ".c":
         return rel_path.with_suffix(".rel")
     if compile_source.suffix == ".asm":

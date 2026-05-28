@@ -51,6 +51,28 @@ class ObjectPathTest(unittest.TestCase):
                 obj_dir / "src" / "Components" / "bar.rel",
             )
 
+    def test_external_source_gets_stable_object_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            workspace_root = temp_root / "project"
+            external_root = temp_root / "sdk"
+            compile_source = external_root / "Components" / "foo.c"
+            obj_dir = temp_root / "obj"
+
+            workspace_root.mkdir()
+            compile_source.parent.mkdir(parents=True)
+            compile_source.write_text("void foo(void) {}\n", encoding="utf-8")
+
+            object_path = compute_object_path(
+                compile_source=compile_source,
+                workspace_root=workspace_root,
+                obj_dir=obj_dir,
+            )
+
+            self.assertEqual(object_path.name, "foo.rel")
+            self.assertEqual(object_path.parent.parent, obj_dir / "external")
+            self.assertEqual(len(object_path.parent.name), 12)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ZSTACK_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)
-WORKSPACE_DIR=$(cd "$ZSTACK_DIR/.." && pwd)
+DEFAULT_WORKSPACE_DIR=$(cd "$ZSTACK_DIR/.." && pwd)
+WORKSPACE_DIR=${WORKSPACE_DIR:-"$DEFAULT_WORKSPACE_DIR"}
 SDCC_BUILD_DIR=${SDCC_BUILD_DIR:-"$WORKSPACE_DIR/sdcc-build"}
 SDCC_TOOLCHAIN_DIR=${SDCC_TOOLCHAIN_DIR:-"$SDCC_BUILD_DIR"}
 PROJECT_NAME=${PROJECT_NAME:-samplelight-cc2530db-coordinator}
@@ -46,6 +47,7 @@ REMAP_BANKED_HEX_SCRIPT="$SCRIPT_DIR/remap_banked_hex.py"
 PRELINK_SYMBOLS_SCRIPT="$SCRIPT_DIR/collect_prelink_symbols.py"
 OBJECT_PATH_SCRIPT="$SCRIPT_DIR/object_path.py"
 ASLINK_AREA_BASES_LK="$OUT_DIR/aslink-area-bases.lk"
+ASLINK_AREA_BASES_JSON="$OUT_DIR/aslink-area-bases.json"
 LINK_LOG="$OUT_DIR/link.log"
 LINK_REPORT_JSON="$OUT_DIR/unresolved-libraries.json"
 FIRST_PASS_LINK_LOG="$OUT_DIR/first-pass.link.log"
@@ -75,6 +77,9 @@ HEADER_OVERLAYS=(
   "cc2530-hal-mcu-h:Components/hal/target/CC2530ZNP/hal_mcu.h|Components/hal/target/CC2530EB/hal_mcu.h"
   "cc2530-hal-types-h:Components/hal/target/CC2530ZNP/hal_types.h|Components/hal/target/CC2530EB/hal_types.h"
   "cc2530-hal-board-cfg-h:Components/hal/target/CC2530ZNP/hal_board_cfg.h|Components/hal/target/CC2530EB/hal_board_cfg.h"
+  "cc2530-zcl-h:Components/stack/zcl/zcl.h"
+  "cc2530-zmac-h:Components/zmac/ZMAC.h"
+  "cc2530-binding-table-h:Components/stack/nwk/BindingTable.h"
   "cc2530-zcl-sampleapps-ui-h:Projects/zstack/HomeAutomation/Source/zcl_sampleapps_ui.h"
   "cc2530-onboard-h:Projects/zstack/ZMain/TI2530ZNP/OnBoard.h|Projects/zstack/ZMain/TI2530DB/OnBoard.h"
 )
@@ -389,32 +394,36 @@ prepare_header_overlays() {
   for entry in "${HEADER_OVERLAYS[@]}"; do
     mode=${entry%%:*}
     rel_spec=${entry#*:}
-    input_src=""
     IFS='|' read -r -a candidates <<<"$rel_spec"
     for candidate in "${candidates[@]}"; do
       if [ -f "$ZSTACK_DIR/$candidate" ]; then
         rel_path=$candidate
         input_src="$ZSTACK_DIR/$candidate"
-        break
+        output_src="$GENERATED_SRC_DIR/$sdk_rel_root/$rel_path"
+        prepare_compile_source "$mode" "$input_src" "$output_src"
       fi
     done
-    if [ -z "$input_src" ]; then
-      continue
-    fi
-    output_src="$GENERATED_SRC_DIR/$sdk_rel_root/$rel_path"
-    prepare_compile_source "$mode" "$input_src" "$output_src"
   done
 }
 
 prepare_header_aliases() {
-  local entry alias_rel source_rel source_path alias_path sdk_rel_root
+  local entry alias_rel source_rel source_path alias_path sdk_rel_root mode
   sdk_rel_root=${ZSTACK_DIR#"$WORKSPACE_DIR"/}
   for entry in "${HEADER_ALIASES[@]}"; do
     IFS='|' read -r alias_rel source_rel <<<"$entry"
     source_path="$ZSTACK_DIR/$source_rel"
     [ -f "$source_path" ] || continue
     alias_path="$GENERATED_SRC_DIR/$sdk_rel_root/$alias_rel"
-    prepare_compile_source "copy" "$source_path" "$alias_path"
+    mode=copy
+    case "$source_rel" in
+      Projects/zstack/ZMain/TI2530ZNP/OnBoard.h|Projects/zstack/ZMain/TI2530DB/OnBoard.h)
+        mode=cc2530-onboard-h
+        ;;
+      Components/zmac/ZMAC.h)
+        mode=cc2530-zmac-h
+        ;;
+    esac
+    prepare_compile_source "$mode" "$source_path" "$alias_path"
   done
 }
 
@@ -432,6 +441,7 @@ compile_entry_json() {
   local compile_src
   local codeseg
   local constseg
+  local extra_args_json
   local prepare
   local skip
   local error
@@ -444,6 +454,7 @@ compile_entry_json() {
   compile_src=$(printf '%s\n' "$entry_json" | jq -r '.compile_source')
   codeseg=$(printf '%s\n' "$entry_json" | jq -r '.codeseg // empty')
   constseg=$(printf '%s\n' "$entry_json" | jq -r '.constseg // empty')
+  extra_args_json=$(printf '%s\n' "$entry_json" | jq -c '.sdcc_extra_args // []')
   prepare=$(printf '%s\n' "$entry_json" | jq -r '.prepare // empty')
   skip=$(printf '%s\n' "$entry_json" | jq -r '.skip')
   error=$(printf '%s\n' "$entry_json" | jq -r '.error // empty')
@@ -476,6 +487,12 @@ compile_entry_json() {
     assemble_with_sdas8051 "$prepared_src" "$obj_path"
   else
     COMPILE_ARGS=("${SDCC_ARGS[@]}")
+    if [ "$extra_args_json" != "[]" ]; then
+      while IFS= read -r extra_arg; do
+        [ -n "$extra_arg" ] || continue
+        COMPILE_ARGS+=("$extra_arg")
+      done < <(printf '%s\n' "$extra_args_json" | jq -r '.[]')
+    fi
     if [ -z "$codeseg" ] && [ -n "$SDCC_DEFAULT_CODESEG" ]; then
       COMPILE_ARGS+=(--codeseg "$SDCC_DEFAULT_CODESEG")
     fi
@@ -735,37 +752,52 @@ link_with_sdcc() {
 write_second_pass_lk() {
   local out_lk=$1
   if [ -f "$CONVERTED_MANIFEST" ]; then
-    "$PYTHON_BIN" "$ASLINK_AREA_BASES_SCRIPT" \
+    if ! "$PYTHON_BIN" "$ASLINK_AREA_BASES_SCRIPT" \
       --manifest "$MANIFEST" \
       --converted-manifest "$CONVERTED_MANIFEST" \
       --code-loc "$SDCC_CODE_LOC" \
       --code-size "$SDCC_CODE_SIZE" \
       --xram-loc "$SDCC_XRAM_LOC" \
-      --xram-size "$SDCC_XRAM_SIZE" >"$ASLINK_AREA_BASES_LK"
+      --xram-size "$SDCC_XRAM_SIZE" \
+      --json >"$ASLINK_AREA_BASES_JSON"; then
+      exit 1
+    fi
   else
-    : >"$ASLINK_AREA_BASES_LK"
+    printf '{"warnings": [], "base_directives": []}\n' >"$ASLINK_AREA_BASES_JSON"
   fi
-  "$PYTHON_BIN" - "$ARTIFACT_BASE.lk" "$CONVERTED_MANIFEST" "$out_lk" <<'PY'
+  "$PYTHON_BIN" - "$ARTIFACT_BASE.lk" "$CONVERTED_MANIFEST" "$ASLINK_AREA_BASES_JSON" "$ASLINK_AREA_BASES_LK" "$out_lk" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 base_lk = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
 manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-out_lk = Path(sys.argv[3])
-area_bases_lk = out_lk.parent / "aslink-area-bases.lk"
+area_plan = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+area_bases_lk = Path(sys.argv[4])
+out_lk = Path(sys.argv[5])
+
+replacement_code_size = area_plan.get("logical_code_size")
+
 filtered = [
-    line
+    (
+        f"-C 0x{int(replacement_code_size):X}"
+        if replacement_code_size is not None and line.startswith("-C ")
+        else line
+    )
     for line in base_lk
     if "/iar-converted/" not in line and line not in ("", "-e")
 ]
-extra_lines = []
-if area_bases_lk.exists():
-    extra_lines = [
-        line
-        for line in area_bases_lk.read_text(encoding="utf-8").splitlines()
-        if line
-    ]
+
+extra_lines = [
+    f"; {warning}"
+    for warning in area_plan.get("warnings", [])
+]
+extra_lines.extend(
+    f"-b {directive['area']} = 0x{int(directive['base']):X}"
+    for directive in area_plan.get("base_directives", [])
+)
+
+area_bases_lk.write_text("\n".join(extra_lines) + ("\n" if extra_lines else ""), encoding="utf-8")
 out_lk.write_text(
     "\n".join(filtered + extra_lines + manifest.get("emitted_artifacts", []) + ["-e"]) + "\n",
     encoding="utf-8",

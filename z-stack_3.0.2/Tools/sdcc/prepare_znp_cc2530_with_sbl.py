@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Iterable
 
 from extract_iar_project import classify_sdcc_defines, collect_manifest, write_sdcc_header
+from sdcc_contract import (
+    merge_sdcc_extra_sources,
+    sdcc_flash_reservation_sources,
+    sdcc_required_areas,
+    sdcc_sleep_entry_sources,
+)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -15,6 +21,7 @@ ZSTACK_DIR = SCRIPT_DIR.parent.parent
 PROJECT_FILE = ZSTACK_DIR / "Projects" / "zstack" / "ZNP" / "CC253x" / "CC2530.ewp"
 CONFIG_NAME = "ZNP-with-SBL"
 DEVICE_DEFINE = "FIRMWARE_CC2530"
+BOOTLOADER_DEFINE = "FIRMWARE_SBL"
 FULL_PROFILE = "full"
 BALANCED_PROFILE = "balanced"
 LEAN_PROFILE = "lean"
@@ -111,6 +118,27 @@ LEAN_HEADER_LINES = (
     "#define ZSTACK_DEVICE_BUILD DEVICE_BUILD_COORDINATOR",
 )
 
+ZMAIN_SUFFIX = "Projects/zstack/ZMain/TI2530ZNP/ZMain.c"
+
+
+def _merge_compile_override(manifest: dict[str, object], override: dict[str, object]) -> None:
+    source = override.get("source")
+    if not isinstance(source, str):
+        return
+
+    overrides = manifest.get("sdcc_compile_overrides")
+    if not isinstance(overrides, list):
+        overrides = []
+        manifest["sdcc_compile_overrides"] = overrides
+
+    for item in overrides:
+        if not isinstance(item, dict) or item.get("source") != source:
+            continue
+        item.update(override)
+        return
+
+    overrides.append(dict(override))
+
 
 def _exclude_sources(source_files: Iterable[str], suffixes: Iterable[str]) -> list[str]:
     excluded = tuple(suffixes)
@@ -128,6 +156,29 @@ def _replace_sources(source_files: Iterable[str], replacements: dict[str, str]) 
 def apply_profile(manifest: dict[str, object], profile: str) -> tuple[dict[str, object], list[str]]:
     profile = profile.lower()
     manifest["profile"] = profile
+
+    for key in ("defines", "all_defines", "sdcc_cli_defines"):
+        values = manifest.get(key)
+        if isinstance(values, list) and BOOTLOADER_DEFINE not in values:
+            values.append(BOOTLOADER_DEFINE)
+
+    manifest["sdcc_required_areas"] = sdcc_required_areas(profile)
+    manifest["sdcc_extra_sources"] = merge_sdcc_extra_sources(
+        manifest.get("sdcc_extra_sources", []),
+        [
+            *sdcc_sleep_entry_sources(),
+            *sdcc_flash_reservation_sources(profile),
+        ],
+    )
+    zmain_source = next((path for path in manifest.get("source_files", []) if isinstance(path, str) and path.endswith(ZMAIN_SUFFIX)), None)
+    if zmain_source is not None:
+        _merge_compile_override(
+            manifest,
+            {
+                "source": zmain_source,
+                "sdcc_extra_args": ["--norestartseqatomics"],
+            },
+        )
 
     if profile == FULL_PROFILE:
         return manifest, list(COMMON_HEADER_LINES)

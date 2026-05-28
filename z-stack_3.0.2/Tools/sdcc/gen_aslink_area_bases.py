@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import sys
@@ -13,6 +14,19 @@ PLACEMENT_RE = re.compile(
     r"^-(?P<mode>[PZ])\((?P<memory>[^)]+)\)(?P<areas>[^=]+)=(?P<ranges>.+)$"
 )
 DEFINE_RE = re.compile(r"^-D(?P<name>[A-Za-z0-9_]+)=(?P<expr>.+)$")
+BANK_COUNT_RE = re.compile(
+    r"_NR_OF_BANKS\s*\+\s*_FIRST_BANK_ADDR\s*=\s*(?P<bank_window>0x[0-9A-Fa-f]+|\d+)"
+)
+
+FLASH_RESERVATION_OFFSETS = {
+    "LOCK_BITS_ADDRESS_SPACE": 0x10,
+    "IEEE_ADDRESS_SPACE": 0x18,
+    "DEV_PRIVATE_KEY_ADDRESS_SPACE": 0x2E,
+    "CA_PUBLIC_KEY_ADDRESS_SPACE": 0x44,
+    "IMPLICIT_CERTIFICATE_ADDRESS_SPACE": 0x74,
+    "RESERVED_ADDRESS_SPACE": 0x800,
+    "ZIGNV_ADDRESS_SPACE": 0x3800,
+}
 
 
 def _parse_int(value: str) -> int:
@@ -66,18 +80,79 @@ def _resolve_token(token: str, variables: dict[str, int]) -> int | None:
             pass
     if token.isdigit():
         return int(token, 10)
-    for operator in ("+", "-"):
-        if operator not in token:
-            continue
-        left, right = token.rsplit(operator, 1)
-        left_value = _resolve_token(left, variables)
-        right_value = _resolve_token(right, variables)
-        if left_value is None or right_value is None:
-            continue
-        if operator == "+":
-            return left_value + right_value
-        return left_value - right_value
-    return None
+    try:
+        expr = ast.parse(token, mode="eval")
+    except SyntaxError:
+        return None
+
+    def _eval(node: ast.AST) -> int | None:
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return int(node.value)
+        if isinstance(node, ast.Name):
+            return variables.get(node.id)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            operand = _eval(node.operand)
+            if operand is None:
+                return None
+            return -operand
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult)):
+            left_value = _eval(node.left)
+            right_value = _eval(node.right)
+            if left_value is None or right_value is None:
+                return None
+            if isinstance(node.op, ast.Add):
+                return left_value + right_value
+            if isinstance(node.op, ast.Sub):
+                return left_value - right_value
+            return left_value * right_value
+        return None
+
+    return _eval(expr)
+
+
+def _maybe_capture_bank_count(line: str, variables: dict[str, int]) -> None:
+    match = BANK_COUNT_RE.search(line)
+    if match is None:
+        return
+    first_bank_addr = variables.get("_FIRST_BANK_ADDR")
+    if first_bank_addr in (None, 0):
+        return
+    bank_window = _resolve_token(match.group("bank_window"), variables)
+    if bank_window is None:
+        return
+    variables["_NR_OF_BANKS"] = (bank_window - first_bank_addr) // first_bank_addr
+
+
+def _derive_bank_count_from_placements(
+    placements: dict[str, dict[str, object]], variables: dict[str, int]
+) -> None:
+    if variables.get("_NR_OF_BANKS", 0) > 0:
+        return
+    banked_code = placements.get("BANKED_CODE")
+    if banked_code is None:
+        return
+    ranges = banked_code.get("ranges", [])
+    root_start = variables.get("_CODE_START")
+    if root_start is None:
+        return
+    bank_ranges = [rng for rng in ranges if int(rng[0]) != int(root_start)]
+    if bank_ranges:
+        variables["_NR_OF_BANKS"] = len(bank_ranges)
+
+
+def _maybe_capture_bank_count_from_ranges(
+    area: str, ranges: list[tuple[int, int]], variables: dict[str, int]
+) -> None:
+    if area != "BANKED_CODE" or variables.get("_NR_OF_BANKS", 0) > 0:
+        return
+    root_start = variables.get("_CODE_START")
+    if root_start is None:
+        return
+    bank_ranges = [rng for rng in ranges if int(rng[0]) != int(root_start)]
+    if bank_ranges:
+        variables["_NR_OF_BANKS"] = len(bank_ranges)
 
 
 def _parse_range(expr: str, variables: dict[str, int]) -> tuple[int, int] | None:
@@ -105,6 +180,7 @@ def _parse_xcl(path: Path, variables: dict[str, int]) -> dict[str, dict[str, obj
             if value is not None:
                 variables[define_match.group("name")] = value
             continue
+        _maybe_capture_bank_count(line, variables)
         match = PLACEMENT_RE.match(line)
         if not match:
             continue
@@ -118,11 +194,13 @@ def _parse_xcl(path: Path, variables: dict[str, int]) -> dict[str, dict[str, obj
                 continue
             ranges.append(parsed)
         for area in areas:
+            _maybe_capture_bank_count_from_ranges(area, ranges, variables)
             placements[area] = {
                 "mode": mode,
                 "memory": memory,
                 "ranges": ranges,
             }
+    _derive_bank_count_from_placements(placements, variables)
     return placements
 
 
@@ -182,11 +260,25 @@ def _required_areas(manifest: dict[str, object]) -> list[str]:
     ]
 
 
+def _logical_code_extent(
+    placements: dict[str, dict[str, object]], variables: dict[str, int]
+) -> tuple[int, int]:
+    logical_end = int(variables["_CODE_END"])
+    for placement in placements.values():
+        if str(placement.get("memory")) != "CODE":
+            continue
+        for _, end in placement.get("ranges", []):
+            logical_end = max(logical_end, int(end))
+    logical_start = int(variables["_CODE_START"])
+    return logical_end, logical_end - logical_start + 1
+
+
 def _select_base(
     area: str,
     placement: dict[str, object],
     variables: dict[str, int],
     descriptor: dict[str, object] | None,
+    all_placements: dict[str, dict[str, object]],
 ) -> int | None:
     ranges = placement.get("ranges", [])
     if not ranges:
@@ -205,6 +297,19 @@ def _select_base(
             if start != root_start:
                 return int(start)
         return first_start
+    if area in FLASH_RESERVATION_OFFSETS:
+        banked_code = all_placements.get("BANKED_CODE")
+        if banked_code is not None:
+            banked_ranges = banked_code.get("ranges", [])
+            root_start = variables["_CODE_START"]
+            non_root_ranges = [
+                (int(start), int(end))
+                for start, end in banked_ranges
+                if int(start) != int(root_start)
+            ]
+            if non_root_ranges:
+                _, last_end = non_root_ranges[-1]
+                return last_end + 1 - FLASH_RESERVATION_OFFSETS[area]
     return first_start
 
 
@@ -233,6 +338,7 @@ def build_plan(
         }
 
     xcl_placements = _parse_xcl(xcl_path, variables)
+    logical_code_end, logical_code_size = _logical_code_extent(xcl_placements, variables)
     present_areas, metadata_payloads = _collect_section_maps(converted_manifest_path)
     required_areas = _required_areas(manifest)
     base_directives: list[dict[str, object]] = []
@@ -241,7 +347,7 @@ def build_plan(
         placement = xcl_placements.get(area)
         if placement is None:
             continue
-        base = _select_base(area, placement, variables, descriptor)
+        base = _select_base(area, placement, variables, descriptor, xcl_placements)
         if base is None or area in seen:
             continue
         seen.add(area)
@@ -261,7 +367,7 @@ def build_plan(
         placement = xcl_placements.get(area)
         if placement is None:
             continue
-        base = _select_base(area, placement, variables, None)
+        base = _select_base(area, placement, variables, None, xcl_placements)
         if base is None:
             continue
         seen.add(area)
@@ -276,6 +382,14 @@ def build_plan(
         )
 
     warnings: list[str] = []
+    missing_required_areas: list[str] = []
+    for area in required_areas:
+        if area not in seen:
+            missing_required_areas.append(area)
+
+    if missing_required_areas:
+        warnings.append(f"Missing required SDCC areas: {', '.join(missing_required_areas)}")
+
     if not base_directives:
         warnings.append("No matching named areas found between xcl placements and converted metadata.")
     if any(metadata.get("area_plan", {}).get("banked_code_areas") for metadata in metadata_payloads):
@@ -286,7 +400,10 @@ def build_plan(
     return {
         "xcl_path": str(xcl_path),
         "base_directives": base_directives,
+        "logical_code_end": logical_code_end,
+        "logical_code_size": logical_code_size,
         "warnings": warnings,
+        "missing_required_areas": missing_required_areas,
     }
 
 
@@ -322,9 +439,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         json.dump(plan, sys.stdout, indent=2)
         sys.stdout.write("\n")
-        return 0
+        return 1 if plan.get("missing_required_areas") else 0
     _emit_lk(plan, sys.stdout)
-    return 0
+    return 1 if plan.get("missing_required_areas") else 0
 
 
 if __name__ == "__main__":

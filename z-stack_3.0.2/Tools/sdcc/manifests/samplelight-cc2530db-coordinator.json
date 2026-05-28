@@ -249,10 +249,6 @@
       "codeseg": "HOME"
     },
     {
-      "source": "/Users/ivan.belokobylskiy/projects/ti/sdcc-dev/Z-Stack_3.0.2/Components/hal/target/CC2530EB/hal_sleep.c",
-      "codeseg": "HOME"
-    },
-    {
       "source": "/Users/ivan.belokobylskiy/projects/ti/sdcc-dev/Z-Stack_3.0.2/Components/mac/low_level/srf04/single_chip/mac_mcu.c",
       "codeseg": "HOME"
     },
@@ -266,10 +262,14 @@
     }
   ],
   "sdcc_extra_sources": [
-    "/Users/ivan.belokobylskiy/projects/ti/sdcc-dev/Z-Stack_3.0.2/Tools/sdcc/asm/cc2530_hal_sleep_set_mode.asm"
+    "/Users/ivan.belokobylskiy/projects/ti/sdcc-dev/Z-Stack_3.0.2/Tools/sdcc/asm/cc2530_full_nv_reservation.asm"
   ],
   "sdcc_required_areas": [
-    "SLEEP_CODE"
+    "SLEEP_CODE",
+    "LOCK_BITS_ADDRESS_SPACE",
+    "IEEE_ADDRESS_SPACE",
+    "RESERVED_ADDRESS_SPACE",
+    "ZIGNV_ADDRESS_SPACE"
   ],
   "include_dirs": [
     "/Users/ivan.belokobylskiy/projects/ti/sdcc-dev/Z-Stack_3.0.2/Projects/zstack/HomeAutomation/SampleLight/CC2530DB",

@@ -25,8 +25,29 @@ def resolve_iar_path(raw: str, project_dir: Path) -> str:
     return value
 
 
-def resolve_many(values: Iterable[str], project_dir: Path) -> list[str]:
-    return [resolve_iar_path(v, project_dir) for v in values if v and v.strip()]
+class IarPathResolver:
+    def __init__(self, project_dir: Path, sdk_project_dir: Path | None = None) -> None:
+        self.project_dir = project_dir.resolve()
+        self.sdk_project_dir = sdk_project_dir.resolve() if sdk_project_dir is not None else None
+
+    def resolve(self, raw: str) -> str:
+        value = norm_windows_path(raw.strip())
+        if value == "$PROJ_DIR$":
+            return str(self.project_dir)
+        if not value.startswith("$PROJ_DIR$/"):
+            return value
+
+        rel_value = value[len("$PROJ_DIR$/") :]
+        project_candidate = (self.project_dir / rel_value).resolve()
+        if project_candidate.exists() or self.sdk_project_dir is None:
+            return str(project_candidate)
+
+        sdk_candidate = (self.sdk_project_dir / rel_value).resolve()
+        return str(sdk_candidate)
+
+
+def resolve_many(values: Iterable[str], resolver: IarPathResolver) -> list[str]:
+    return [resolver.resolve(v) for v in values if v and v.strip()]
 
 
 def option_states(settings: ET.Element, option_name: str) -> list[str]:
@@ -52,21 +73,26 @@ def iter_group_files(group: ET.Element) -> Iterable[str]:
         yield from iter_group_files(subgroup)
 
 
-def parse_cfg_extra_opts(extra_opts: list[str], project_dir: Path) -> list[str]:
+def parse_cfg_extra_opts(extra_opts: list[str], resolver: IarPathResolver) -> list[str]:
     cfgs: list[str] = []
     for opt in extra_opts:
         match = re.fullmatch(r"-f\s+(.+)", opt.strip())
         if match:
-            cfgs.append(resolve_iar_path(match.group(1), project_dir))
+            cfgs.append(resolver.resolve(match.group(1)))
     return cfgs
 
 
-def parse_preinclude_extra_opts(extra_opts: list[str], project_dir: Path) -> list[str]:
+def parse_preinclude_extra_opts(extra_opts: list[str], resolver_or_project_dir: IarPathResolver | Path) -> list[str]:
+    resolver = (
+        resolver_or_project_dir
+        if isinstance(resolver_or_project_dir, IarPathResolver)
+        else IarPathResolver(resolver_or_project_dir)
+    )
     headers: list[str] = []
     for opt in extra_opts:
         match = re.fullmatch(r"--preinclude=(.+)", opt.strip())
         if match:
-            headers.append(resolve_iar_path(match.group(1), project_dir))
+            headers.append(resolver.resolve(match.group(1)))
     return headers
 
 
@@ -82,12 +108,12 @@ def parse_cfg_preincludes(cfg_files: list[str]) -> list[str]:
     return headers
 
 
-def parse_linker_libs(extra_opts: list[str], project_dir: Path) -> list[str]:
+def parse_linker_libs(extra_opts: list[str], resolver: IarPathResolver) -> list[str]:
     libs: list[str] = []
     for opt in extra_opts:
         match = re.fullmatch(r"-C\s+(.+)", opt.strip())
         if match:
-            libs.append(resolve_iar_path(match.group(1), project_dir))
+            libs.append(resolver.resolve(match.group(1)))
     return libs
 
 
@@ -160,9 +186,73 @@ def write_sdcc_header(path: Path, header_defines: list[dict[str, str]]) -> None:
         else:
             lines.append(f"#define {define['name']} {value}")
 
-    lines.extend(["", "#endif /* ZSTACK_SDCC_CFG_H */", ""])
+    lines.extend(
+        [
+            "",
+            "#if defined(__SDCC)",
+            "/* CC2530 compatibility aliases for IAR Z-Stack sources. */",
+            "#ifndef XREG",
+            "#define XREG(addr) (*((volatile unsigned char __xdata *)(addr)))",
+            "#endif",
+            "#ifndef P_INFOPAGE",
+            "#define P_INFOPAGE 0x7800",
+            "#endif",
+            "#ifndef SRCRESINDEX",
+            "__xdata volatile unsigned char __at(0x6163) SRCRESINDEX;",
+            "#endif",
+            "#ifndef SRCEXTPENDEN0",
+            "__xdata volatile unsigned char __at(0x6164) SRCEXTPENDEN0;",
+            "__xdata volatile unsigned char __at(0x6165) SRCEXTPENDEN1;",
+            "__xdata volatile unsigned char __at(0x6166) SRCEXTPENDEN2;",
+            "#endif",
+            "#ifndef SRCSHORTPENDEN0",
+            "__xdata volatile unsigned char __at(0x6167) SRCSHORTPENDEN0;",
+            "__xdata volatile unsigned char __at(0x6168) SRCSHORTPENDEN1;",
+            "__xdata volatile unsigned char __at(0x6169) SRCSHORTPENDEN2;",
+            "#endif",
+            "#ifndef SRC_ADDR_TABLE",
+            "#define SRC_ADDR_TABLE ((volatile unsigned char __xdata *)0x6100)",
+            "#endif",
+            "#ifndef PAN_ID0",
+            "#define PAN_ID0 PANIDL",
+            "#define PAN_ID1 PANIDH",
+            "#endif",
+            "#ifndef SHORT_ADDR0",
+            "#define SHORT_ADDR0 SHORTADDRL",
+            "#define SHORT_ADDR1 SHORTADDRH",
+            "#endif",
+            "#ifndef EXT_ADDR0",
+            "#define EXT_ADDR0 IEEE_ADDR",
+            "#endif",
+            "#ifndef XX_T1CCTL0",
+            "#define XX_T1CCTL0 XREG(0x70E5)",
+            "#define XX_T1CC0L XREG(0x70DA)",
+            "#define XX_T1CC0H XREG(0x70DB)",
+            "#endif",
+            "#ifndef X_TIMIF",
+            "#define X_TIMIF XREG(0x70D8)",
+            "#endif",
+            "#ifndef X_T3CCTL0",
+            "#define X_T3CCTL0 XREG(0x70CC)",
+            "#define X_T3CC0 XREG(0x70CD)",
+            "#define X_T3CTL XREG(0x70CB)",
+            "#endif",
+            "#ifndef X_T4CCTL0",
+            "#define X_T4CCTL0 XREG(0x70EC)",
+            "#define X_T4CC0 XREG(0x70ED)",
+            "#define X_T4CTL XREG(0x70EB)",
+            "#endif",
+            "#endif",
+            "",
+            "#endif /* ZSTACK_SDCC_CFG_H */",
+            "",
+        ]
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines), encoding="utf-8")
+    content = "\n".join(lines)
+    if path.exists() and path.read_text(encoding="utf-8", errors="ignore") == content:
+        return
+    path.write_text(content, encoding="utf-8")
 
 
 def find_zstack_root(project_file: Path) -> Path:
@@ -172,7 +262,20 @@ def find_zstack_root(project_file: Path) -> Path:
     raise SystemExit(f"Unable to locate Z-Stack root for {project_file}")
 
 
-def collect_manifest(project_file: Path, config_name: str) -> dict:
+def find_sdk_project_dir(project_file: Path, repo_root: Path) -> Path | None:
+    matches = sorted(repo_root.glob(f"Projects/**/{project_file.name}"))
+    if not matches:
+        return None
+    return matches[0].parent.resolve()
+
+
+def collect_manifest(
+    project_file: Path,
+    config_name: str,
+    *,
+    repo_root: Path | None = None,
+    sdk_project_dir: Path | None = None,
+) -> dict:
     root = ET.parse(project_file).getroot()
     config = next(
         (cfg for cfg in root.findall("./configuration") if cfg.findtext("name") == config_name),
@@ -182,7 +285,11 @@ def collect_manifest(project_file: Path, config_name: str) -> dict:
         raise SystemExit(f"Configuration not found: {config_name}")
 
     project_dir = project_file.parent.resolve()
-    repo_root = find_zstack_root(project_file)
+    resolved_repo_root = repo_root.resolve() if repo_root is not None else find_zstack_root(project_file)
+    resolved_sdk_project_dir = sdk_project_dir
+    if resolved_sdk_project_dir is None and repo_root is not None:
+        resolved_sdk_project_dir = find_sdk_project_dir(project_file, resolved_repo_root)
+    resolver = IarPathResolver(project_dir, resolved_sdk_project_dir)
 
     icc = find_tool_settings(config, "ICC8051")
     xlink = find_tool_settings(config, "XLINK")
@@ -199,10 +306,10 @@ def collect_manifest(project_file: Path, config_name: str) -> dict:
     defines = option_states(icc, "CCDefines")
     linker_extra = option_states(xlink, "Linker Extra Options Edit")
     xcl_file = option_states(xlink, "XclFile")
-    cfg_files = parse_cfg_extra_opts(compiler_extra, project_dir)
+    cfg_files = parse_cfg_extra_opts(compiler_extra, resolver)
     preinclude_files = list(
         dict.fromkeys(
-            parse_preinclude_extra_opts(compiler_extra, project_dir)
+            parse_preinclude_extra_opts(compiler_extra, resolver)
             + parse_cfg_preincludes(cfg_files)
         )
     )
@@ -213,7 +320,8 @@ def collect_manifest(project_file: Path, config_name: str) -> dict:
     manifest = {
         "project_file": str(project_file.resolve()),
         "project_dir": str(project_dir),
-        "repo_root": str(repo_root.resolve()),
+        "repo_root": str(resolved_repo_root.resolve()),
+        "sdk_project_dir": str(resolved_sdk_project_dir) if resolved_sdk_project_dir is not None else None,
         "configuration": config_name,
         "chip": option_states(general, "OGChipSelectMenu"),
         "calling_convention_state": option_states(general, "Calling convention"),
@@ -224,16 +332,16 @@ def collect_manifest(project_file: Path, config_name: str) -> dict:
         "all_defines": all_defines,
         "sdcc_cli_defines": sdcc_cli_defines,
         "sdcc_header_defines": sdcc_header_defines,
-        "include_dirs": resolve_many(include_dirs, project_dir),
-        "source_files": resolve_many(source_files, project_dir),
-        "header_files": resolve_many(header_files, project_dir),
+        "include_dirs": resolve_many(include_dirs, resolver),
+        "source_files": resolve_many(source_files, resolver),
+        "header_files": resolve_many(header_files, resolver),
         "compiler_extra_options": compiler_extra,
         "cfg_files": cfg_files,
         "preinclude_files": preinclude_files,
-        "xcl_file": resolve_many(xcl_file, project_dir),
+        "xcl_file": resolve_many(xcl_file, resolver),
         "linker_extra_options": linker_extra,
-        "iar_libraries": parse_linker_libs(linker_extra, project_dir),
-        "all_project_files": resolve_many(raw_files, project_dir),
+        "iar_libraries": parse_linker_libs(linker_extra, resolver),
+        "all_project_files": resolve_many(raw_files, resolver),
     }
     return manifest
 
@@ -242,11 +350,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Extract build metadata from an IAR .ewp project.")
     parser.add_argument("project", type=Path, help="Path to .ewp project file")
     parser.add_argument("--config", required=True, help="IAR configuration name, e.g. CoordinatorEB")
+    parser.add_argument("--zstack-root", type=Path, help="Z-Stack SDK root for projects stored outside the SDK tree")
+    parser.add_argument("--sdk-project-dir", type=Path, help="SDK project directory used to resolve inherited $PROJ_DIR$ paths")
     parser.add_argument("--output", type=Path, help="Output JSON path")
     parser.add_argument("--sdcc-header-output", type=Path, help="Optional output path for SDCC preinclude header")
     args = parser.parse_args()
 
-    manifest = collect_manifest(args.project, args.config)
+    manifest = collect_manifest(
+        args.project,
+        args.config,
+        repo_root=args.zstack_root,
+        sdk_project_dir=args.sdk_project_dir,
+    )
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

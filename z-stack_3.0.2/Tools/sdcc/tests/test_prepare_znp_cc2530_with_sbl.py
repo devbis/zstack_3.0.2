@@ -4,10 +4,81 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from prepare_znp_cc2530_with_sbl import BALANCED_PROFILE, LEAN_PROFILE, apply_profile
+from prepare_znp_cc2530_with_sbl import FULL_PROFILE, BALANCED_PROFILE, LEAN_PROFILE, apply_profile
+from sdcc_contract import sdcc_flash_reservation_sources
 
 
 class PrepareZnpCc2530WithSblTest(unittest.TestCase):
+    def test_full_profile_marks_flash_windows_required(self):
+        manifest = {"source_files": []}
+        updated, _ = apply_profile(manifest, FULL_PROFILE)
+        self.assertEqual(updated["sdcc_required_areas"], [
+            "SLEEP_CODE",
+            "CRC_SHDW",
+            "LOCK_BITS_ADDRESS_SPACE",
+            "IEEE_ADDRESS_SPACE",
+            "RESERVED_ADDRESS_SPACE",
+            "ZIGNV_ADDRESS_SPACE",
+        ])
+
+    def test_full_profile_adds_flash_reservation_sources(self) -> None:
+        manifest = {"source_files": []}
+        updated, _ = apply_profile(manifest, FULL_PROFILE)
+
+        self.assertEqual(updated["sdcc_extra_sources"], sdcc_flash_reservation_sources(FULL_PROFILE))
+
+    def test_full_profile_defines_firmware_sbl(self) -> None:
+        manifest = {
+            "source_files": [],
+            "defines": ["FIRMWARE_CC2530"],
+            "all_defines": ["FIRMWARE_CC2530"],
+            "sdcc_cli_defines": ["FIRMWARE_CC2530"],
+        }
+
+        updated, _ = apply_profile(manifest, FULL_PROFILE)
+
+        self.assertIn("FIRMWARE_SBL", updated["defines"])
+        self.assertIn("FIRMWARE_SBL", updated["all_defines"])
+        self.assertIn("FIRMWARE_SBL", updated["sdcc_cli_defines"])
+
+    def test_full_profile_adds_norestartseqatomics_override_for_zmain(self) -> None:
+        zmain = "/tmp/Projects/zstack/ZMain/TI2530ZNP/ZMain.c"
+        manifest = {
+            "source_files": [zmain],
+        }
+
+        updated, _ = apply_profile(manifest, FULL_PROFILE)
+
+        self.assertEqual(
+            updated["sdcc_compile_overrides"],
+            [
+                {
+                    "source": zmain,
+                    "sdcc_extra_args": ["--norestartseqatomics"],
+                }
+            ],
+        )
+
+    def test_full_profile_only_adds_nv_reservation_source(self) -> None:
+        manifest = {"source_files": []}
+        updated, _ = apply_profile(manifest, FULL_PROFILE)
+
+        self.assertEqual(
+            updated["sdcc_extra_sources"],
+            [
+                str(
+                    (Path(__file__).resolve().parents[1] / "asm" / "cc2530_full_nv_reservation.asm").resolve()
+                )
+            ],
+        )
+
+    def test_non_full_profiles_do_not_add_flash_reservation_sources(self) -> None:
+        for profile in (BALANCED_PROFILE, LEAN_PROFILE):
+            manifest = {"source_files": []}
+            updated, _ = apply_profile(manifest, profile)
+
+            self.assertEqual(updated.get("sdcc_extra_sources", []), [])
+
     def test_balanced_profile_prunes_mt_features_but_keeps_reduced_af(self) -> None:
         manifest = {
             "source_files": [

@@ -180,6 +180,9 @@ Current scope:
 - library conversion at this step is still metadata-driven; full module
   selection depends on later link feedback
 
+For external project source-porting diagnostics and regex-guided manual fixes,
+see `SDCC_PORTING.md`.
+
 ## ZNP `CC2530 ZNP-with-SBL`
 
 The patched coordinator firmware from

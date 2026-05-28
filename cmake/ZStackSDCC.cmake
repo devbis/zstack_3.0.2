@@ -60,6 +60,7 @@ function(zstack_add_znp_cc2530_with_sbl_target)
   set(import_stamp "${stamps_dir}/import-${ARG_PROFILE}.stamp")
   set(imported_source_root "${import_bundle_dir}/src")
   set(imported_manifest "${import_bundle_dir}/metadata/manifest.json")
+  set(imported_project_cmake "${import_bundle_dir}/cmake/project.cmake")
   set(imported_cfg_header "${import_bundle_dir}/include/cc2530-znp-with-sbl-sdcc-cfg.h")
   set(imported_compile_plan "${import_bundle_dir}/compile-plan.json")
 
@@ -246,6 +247,268 @@ function(zstack_add_znp_cc2530_with_sbl_target)
       "${prepare_native_stamp}"
       ${ZSTACK_NATIVE_OBJECTS}
       "${repo_root}/cmake/ZStackSDCC.cmake"
+    COMMENT "Building ${project_name} (${ARG_PROFILE})"
+    VERBATIM
+  )
+
+  add_custom_target("${ARG_NAME}" ALL DEPENDS "${prepare_native_stamp}" ${ZSTACK_NATIVE_OBJECTS})
+  add_custom_target("${ARG_NAME}_import" DEPENDS "${import_stamp}")
+  add_custom_target("${ARG_NAME}_prepare" DEPENDS "${prepare_native_stamp}")
+  add_custom_target("${ARG_NAME}_hex" DEPENDS "${hex_file}")
+  add_custom_target("${ARG_NAME}_ihx" DEPENDS "${ihx_file}")
+  add_custom_target("${ARG_NAME}_mem" DEPENDS "${mem_file}")
+
+  set("${ARG_NAME}_ARTIFACT_DIR" "${artifact_dir}" PARENT_SCOPE)
+  set("${ARG_NAME}_HEX" "${hex_file}" PARENT_SCOPE)
+  set("${ARG_NAME}_IHX" "${ihx_file}" PARENT_SCOPE)
+  set("${ARG_NAME}_MEM" "${mem_file}" PARENT_SCOPE)
+endfunction()
+
+function(zstack_add_external_iar_project_target)
+  set(options)
+  set(oneValueArgs NAME PROJECT_FILE CONFIG PROFILE SOURCE_ROOT ZSTACK_ROOT TOOLCHAIN_ROOT PORT_INCLUDE_DIR WORK_ROOT IMPORT_DIR OUTPUT_BASE_DIR PYTHON_EXECUTABLE)
+  cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "" ${ARGN})
+
+  foreach(required_arg NAME PROJECT_FILE CONFIG PROFILE SOURCE_ROOT ZSTACK_ROOT TOOLCHAIN_ROOT WORK_ROOT IMPORT_DIR OUTPUT_BASE_DIR PYTHON_EXECUTABLE)
+    if(NOT ARG_${required_arg})
+      message(FATAL_ERROR "zstack_add_external_iar_project_target missing required argument: ${required_arg}")
+    endif()
+  endforeach()
+
+  set(sdcc_tools_dir "${ARG_ZSTACK_ROOT}/Tools/sdcc")
+  set(importer_script "${sdcc_tools_dir}/import_external_iar_project.py")
+  set(native_plan_script "${sdcc_tools_dir}/gen_native_cmake_plan.py")
+  set(build_script "${sdcc_tools_dir}/build_samplelight.sh")
+  set(sdcc_build_folder_marker ".sdcc-build-folder")
+  file(WRITE "${CMAKE_BINARY_DIR}/${sdcc_build_folder_marker}" "Generated SDCC/CMake build directory. Do not treat this tree as project input.\n")
+
+  if(NOT EXISTS "${ARG_PROJECT_FILE}")
+    message(FATAL_ERROR "External IAR project does not exist: ${ARG_PROJECT_FILE}")
+  endif()
+  if(NOT EXISTS "${ARG_ZSTACK_ROOT}/Components")
+    message(FATAL_ERROR "ZSTACK_ROOT does not look like a Z-Stack SDK root: ${ARG_ZSTACK_ROOT}")
+  endif()
+  if(NOT EXISTS "${importer_script}")
+    message(FATAL_ERROR "Missing external IAR import script: ${importer_script}")
+  endif()
+  if(NOT EXISTS "${native_plan_script}")
+    message(FATAL_ERROR "Missing native CMake plan script: ${native_plan_script}")
+  endif()
+  if(NOT EXISTS "${build_script}")
+    message(FATAL_ERROR "Missing SDCC build script: ${build_script}")
+  endif()
+  if(NOT EXISTS "${ARG_TOOLCHAIN_ROOT}/bin/sdcc")
+    message(FATAL_ERROR "SDCC_TOOLCHAIN_ROOT does not contain bin/sdcc: ${ARG_TOOLCHAIN_ROOT}")
+  endif()
+
+  execute_process(
+    COMMAND
+      "${ARG_PYTHON_EXECUTABLE}" "${importer_script}"
+      --project "${ARG_PROJECT_FILE}"
+      --config "${ARG_CONFIG}"
+      --profile "${ARG_PROFILE}"
+      --zstack-root "${ARG_ZSTACK_ROOT}"
+      --out-dir "${ARG_IMPORT_DIR}"
+      --target-name "${ARG_NAME}"
+    RESULT_VARIABLE external_import_rv
+    OUTPUT_VARIABLE external_import_stdout
+    ERROR_VARIABLE external_import_stderr
+  )
+  if(NOT external_import_rv EQUAL 0)
+    message(
+      FATAL_ERROR
+      "Failed to import external IAR project '${ARG_PROJECT_FILE}'.\n${external_import_stdout}${external_import_stderr}"
+    )
+  endif()
+
+  set(imported_project_cmake "${ARG_IMPORT_DIR}/cmake/project.cmake")
+  if(NOT EXISTS "${imported_project_cmake}")
+    message(FATAL_ERROR "External import did not generate ${imported_project_cmake}")
+  endif()
+  include("${imported_project_cmake}")
+
+  if(DEFINED ZSTACK_IMPORTED_CONFIGURE_DEPENDS)
+    set_property(
+      DIRECTORY
+      APPEND
+      PROPERTY CMAKE_CONFIGURE_DEPENDS
+      ${ZSTACK_IMPORTED_CONFIGURE_DEPENDS}
+    )
+  endif()
+
+  set(import_bundle_inputs
+    "${ZSTACK_IMPORTED_MANIFEST}"
+    "${ZSTACK_IMPORTED_COMPILE_PLAN}"
+    "${ZSTACK_IMPORTED_GENERATED_CFG_HEADER}"
+    "${ARG_IMPORT_DIR}/cmake/project.cmake"
+  )
+  set_property(
+    DIRECTORY
+    APPEND
+    PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${import_bundle_inputs}
+  )
+
+  set(work_root "${ARG_WORK_ROOT}")
+  set(stamps_dir "${work_root}/stamps")
+  set(artifact_dir "${ARG_OUTPUT_BASE_DIR}/${ARG_PROFILE}")
+  set(sdcc_work_dir "${work_root}/sdcc-work")
+  set(project_name "${ZSTACK_IMPORTED_PROJECT_NAME}")
+  set(hex_file "${artifact_dir}/${project_name}.hex")
+  set(ihx_file "${artifact_dir}/${project_name}.ihx")
+  set(mem_file "${artifact_dir}/${project_name}.mem")
+  set(logical_hex_file "${artifact_dir}/${project_name}.logical.hex")
+  set(import_stamp "${stamps_dir}/external-import-${ARG_NAME}-${ARG_PROFILE}.stamp")
+
+  set(external_project_inputs ${ZSTACK_IMPORTED_SOURCE_FILES})
+  add_custom_command(
+    OUTPUT "${import_stamp}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${stamps_dir}"
+    COMMAND
+      "${ARG_PYTHON_EXECUTABLE}" "${importer_script}"
+      --project "${ARG_PROJECT_FILE}"
+      --config "${ARG_CONFIG}"
+      --profile "${ARG_PROFILE}"
+      --zstack-root "${ARG_ZSTACK_ROOT}"
+      --out-dir "${ARG_IMPORT_DIR}"
+      --target-name "${ARG_NAME}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${import_stamp}"
+    DEPENDS
+      ${external_project_inputs}
+      ${import_bundle_inputs}
+      "${ARG_PROJECT_FILE}"
+      "${importer_script}"
+      "${native_plan_script}"
+      "${build_script}"
+    COMMENT "Importing external IAR project"
+    VERBATIM
+  )
+
+  set(native_dir "${CMAKE_CURRENT_BINARY_DIR}/native/${ARG_NAME}/${ARG_PROFILE}")
+  set(native_entries_dir "${native_dir}/entries")
+  set(native_plan_cmake "${native_dir}/plan.cmake")
+
+  execute_process(
+    COMMAND
+      "${ARG_PYTHON_EXECUTABLE}" "${native_plan_script}"
+      --compile-plan "${ZSTACK_IMPORTED_COMPILE_PLAN}"
+      --workspace-root "${ARG_SOURCE_ROOT}"
+      --obj-dir "${artifact_dir}/obj"
+      --entries-dir "${native_entries_dir}"
+      --cmake-out "${native_plan_cmake}"
+    RESULT_VARIABLE native_plan_rv
+    OUTPUT_VARIABLE native_plan_stdout
+    ERROR_VARIABLE native_plan_stderr
+  )
+  if(NOT native_plan_rv EQUAL 0)
+    message(
+      FATAL_ERROR
+      "Failed to generate native compile plan for '${ARG_NAME}'.\n${native_plan_stdout}${native_plan_stderr}"
+    )
+  endif()
+  include("${native_plan_cmake}")
+
+  set(build_env
+    "PYTHON_BIN=${ARG_PYTHON_EXECUTABLE}"
+    "WORKSPACE_DIR=${ARG_SOURCE_ROOT}"
+    "SDCC_BUILD_DIR=${sdcc_work_dir}"
+    "SDCC_TOOLCHAIN_DIR=${ARG_TOOLCHAIN_ROOT}"
+    "PROJECT_NAME=${project_name}"
+    "MANIFEST=${ZSTACK_IMPORTED_MANIFEST}"
+    "CFG_HEADER=${ZSTACK_IMPORTED_GENERATED_CFG_HEADER}"
+    "ZNP_SDCC_PROFILE=${ARG_PROFILE}"
+    "SDCC_MODEL=${ZSTACK_IMPORTED_SDCC_MODEL}"
+    "SDCC_ABI=${ZSTACK_IMPORTED_SDCC_ABI}"
+    "SDCC_STACK_MODE=${ZSTACK_IMPORTED_SDCC_STACK_MODE}"
+    "SDCC_CODE_LOC=${ZSTACK_IMPORTED_SDCC_CODE_LOC}"
+    "SDCC_XRAM_LOC=${ZSTACK_IMPORTED_SDCC_XRAM_LOC}"
+    "SDCC_XRAM_SIZE=${ZSTACK_IMPORTED_SDCC_XRAM_SIZE}"
+  )
+  if(ZSTACK_IMPORTED_SDCC_CODE_SIZE)
+    list(APPEND build_env "SDCC_CODE_SIZE=${ZSTACK_IMPORTED_SDCC_CODE_SIZE}")
+  endif()
+  if(ZSTACK_IMPORTED_SDCC_XSTACK_LOC)
+    list(APPEND build_env "SDCC_XSTACK_LOC=${ZSTACK_IMPORTED_SDCC_XSTACK_LOC}")
+  endif()
+  if(ARG_PORT_INCLUDE_DIR)
+    list(APPEND build_env "SDCC_PORT_INC_DIR=${ARG_PORT_INCLUDE_DIR}")
+  endif()
+
+  set(prepare_native_stamp "${stamps_dir}/prepare-native-${ARG_NAME}-${ARG_PROFILE}.stamp")
+  add_custom_command(
+    OUTPUT "${prepare_native_stamp}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${artifact_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${sdcc_work_dir}"
+    COMMAND
+      "${CMAKE_COMMAND}" -E env
+      ${build_env}
+      "BUILD_SAMPLELIGHT_MODE=prepare-native"
+      bash "${build_script}" "${artifact_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${prepare_native_stamp}"
+    DEPENDS
+      "${import_stamp}"
+      ${import_bundle_inputs}
+      "${ZSTACK_IMPORTED_MANIFEST}"
+      "${ZSTACK_IMPORTED_GENERATED_CFG_HEADER}"
+      "${ZSTACK_IMPORTED_COMPILE_PLAN}"
+      "${build_script}"
+    COMMENT "Preparing native SDCC build state"
+    VERBATIM
+  )
+
+  set(entry_count 0)
+  list(LENGTH ZSTACK_NATIVE_OBJECTS entry_count)
+  if(entry_count GREATER 0)
+    math(EXPR entry_last "${entry_count} - 1")
+    foreach(entry_index RANGE 0 ${entry_last})
+      list(GET ZSTACK_NATIVE_OBJECTS ${entry_index} object_file)
+      list(GET ZSTACK_NATIVE_ENTRY_FILES ${entry_index} entry_file)
+      list(GET ZSTACK_NATIVE_COMPILE_SOURCES ${entry_index} compile_source)
+      get_filename_component(object_dir "${object_file}" DIRECTORY)
+      file(RELATIVE_PATH compile_rel "${ARG_SOURCE_ROOT}" "${compile_source}")
+      add_custom_command(
+        OUTPUT "${object_file}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${object_dir}"
+        COMMAND
+          "${CMAKE_COMMAND}" -E env
+          ${build_env}
+          "BUILD_SAMPLELIGHT_MODE=compile-entry"
+          "ENTRY_JSON_FILE=${entry_file}"
+          bash "${build_script}" "${artifact_dir}"
+        DEPENDS
+          "${prepare_native_stamp}"
+          "${entry_file}"
+          "${compile_source}"
+          ${import_bundle_inputs}
+          "${ZSTACK_IMPORTED_MANIFEST}"
+          "${ZSTACK_IMPORTED_GENERATED_CFG_HEADER}"
+          "${ZSTACK_IMPORTED_COMPILE_PLAN}"
+          "${build_script}"
+        COMMENT "Compiling ${compile_rel}"
+        VERBATIM
+      )
+    endforeach()
+  endif()
+
+  add_custom_command(
+    OUTPUT
+      "${hex_file}"
+      "${ihx_file}"
+      "${mem_file}"
+    BYPRODUCTS
+      "${logical_hex_file}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${artifact_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${sdcc_work_dir}"
+    COMMAND
+      "${CMAKE_COMMAND}" -E env
+      ${build_env}
+      "BUILD_SAMPLELIGHT_MODE=link-only"
+      "REUSE_OBJECTS=1"
+      bash "${build_script}" "${artifact_dir}"
+    DEPENDS
+      "${prepare_native_stamp}"
+      ${import_bundle_inputs}
+      ${ZSTACK_NATIVE_OBJECTS}
     COMMENT "Building ${project_name} (${ARG_PROFILE})"
     VERBATIM
   )
