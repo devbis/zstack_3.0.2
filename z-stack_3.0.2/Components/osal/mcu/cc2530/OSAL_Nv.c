@@ -22,7 +22,7 @@
   its documentation for any purpose.
 
   YOU FURTHER ACKNOWLEDGE AND AGREE THAT THE SOFTWARE AND DOCUMENTATION ARE
-  PROVIDED “AS IS” WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+  PROVIDED ï¿½AS ISï¿½ WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
   INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF MERCHANTABILITY, TITLE,
   NON-INFRINGEMENT AND FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL
   TEXAS INSTRUMENTS OR ITS LICENSORS BE LIABLE OR OBLIGATED UNDER CONTRACT,
@@ -183,9 +183,15 @@ typedef enum
 #ifndef OAD_KEEP_NV_PAGES
 // When NV pages are to remain intact during OAD download,
 // the image itself should not include NV pages.
+#if defined(__SDCC)
+/* SDCC profiles rely on the linker script to reserve NV pages.
+ */
+#endif
+#if !defined(__SDCC)
 #pragma location="ZIGNV_ADDRESS_SPACE"
 __no_init uint8 _nvBuf[OSAL_NV_PAGES_USED * OSAL_NV_PAGE_SIZE];
 #pragma required=_nvBuf
+#endif
 #endif // OAD_KEEP_NV_PAGES
 
 /*********************************************************************

@@ -23,7 +23,7 @@
   its documentation for any purpose.
 
   YOU FURTHER ACKNOWLEDGE AND AGREE THAT THE SOFTWARE AND DOCUMENTATION ARE
-  PROVIDED “AS IS” WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+  PROVIDED ï¿½AS ISï¿½ WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
   INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF MERCHANTABILITY, TITLE,
   NON-INFRINGEMENT AND FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL
   TEXAS INSTRUMENTS OR ITS LICENSORS BE LIABLE OR OBLIGATED UNDER CONTRACT,
@@ -198,11 +198,14 @@ extern uint8 aExtendedAddress[8];
 
 #define OSAL_SET_CPU_INTO_SLEEP(timeout) halSleep(timeout); /* Called from OSAL_PwrMgr */
 
-#ifdef __IAR_SYSTEMS_ICC__
+#if defined(__IAR_SYSTEMS_ICC__)
 // Internal (MCU) Stack addresses
 #define CSTACK_BEG ((uint8 const *)(_Pragma("segment=\"XSTACK\"") __segment_begin("XSTACK")))
 #define CSTACK_END ((uint8 const *)(_Pragma("segment=\"XSTACK\"") __segment_end("XSTACK"))-1)
 // Stack Initialization Value
+#define STACK_INIT_VALUE  0xCD
+#elif defined(__SDCC)
+// SDCC uses an XDATA stack layout that is not meaningfully introspectable here.
 #define STACK_INIT_VALUE  0xCD
 #else
 #error Check compiler compatibility.

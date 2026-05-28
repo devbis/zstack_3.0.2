@@ -22,7 +22,7 @@
   its documentation for any purpose.
 
   YOU FURTHER ACKNOWLEDGE AND AGREE THAT THE SOFTWARE AND DOCUMENTATION ARE
-  PROVIDED “AS IS” WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+  PROVIDED ï¿½AS ISï¿½ WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
   INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF MERCHANTABILITY, TITLE,
   NON-INFRINGEMENT AND FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL
   TEXAS INSTRUMENTS OR ITS LICENSORS BE LIABLE OR OBLIGATED UNDER CONTRACT,
@@ -75,6 +75,21 @@
 #define HAL_ISR_FUNC_DECLARATION(f,v)   _PRAGMA(vector=v) __near_func __interrupt void f(void)
 #define HAL_ISR_FUNC_PROTOTYPE(f,v)     _PRAGMA(vector=v) __near_func __interrupt void f(void)
 #define HAL_ISR_FUNCTION(f,v)           HAL_ISR_FUNC_PROTOTYPE(f,v); HAL_ISR_FUNC_DECLARATION(f,v)
+
+/* ---------------------- SDCC Compiler ---------------------- */
+#elif defined __SDCC
+#include <cc2530.h>
+#define HAL_COMPILER_SDCC
+#define HAL_MCU_LITTLE_ENDIAN()   1
+#define HAL_ISR_FUNC_DECLARATION(f,v)   void f(void) __interrupt (v)
+#define HAL_ISR_FUNC_PROTOTYPE(f,v)     void f(void) __interrupt (v)
+#define HAL_ISR_FUNCTION(f,v)           HAL_ISR_FUNC_PROTOTYPE(f,v); HAL_ISR_FUNC_DECLARATION(f,v)
+#ifndef ADCCFG
+#define ADCCFG APCFG
+#endif
+#ifndef T2CSPCFG
+#define T2CSPCFG T2EVTCFG
+#endif
 
 /* ---------------------- Keil Compiler ---------------------- */
 #elif defined __KEIL__

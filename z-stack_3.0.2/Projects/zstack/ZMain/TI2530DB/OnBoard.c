@@ -24,7 +24,7 @@
   its documentation for any purpose.
 
   YOU FURTHER ACKNOWLEDGE AND AGREE THAT THE SOFTWARE AND DOCUMENTATION ARE
-  PROVIDED “AS IS” WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+  PROVIDED ï¿½AS ISï¿½ WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
   INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF MERCHANTABILITY, TITLE,
   NON-INFRINGEMENT AND FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL
   TEXAS INSTRUMENTS OR ITS LICENSORS BE LIABLE OR OBLIGATED UNDER CONTRACT,
@@ -83,21 +83,27 @@ const CODE uint16 _crcShdw = 0xFFFF;
 
 #elif !defined MT_UBL_FUNC
 
+#if !defined(__SDCC)
 #pragma location="LOCK_BITS_ADDRESS_SPACE"
 __no_init uint8 _lockBits[16];
 #pragma required=_lockBits
+#endif
 
 #if defined ZCL_KEY_ESTABLISH
 #include "zcl_cert_data.c"
 #else
+#if !defined(__SDCC)
 #pragma location="IEEE_ADDRESS_SPACE"
 __no_init uint8 _nvIEEE[Z_EXTADDR_LEN];
 #pragma required=_nvIEEE
 #endif
+#endif
 
+#if !defined(__SDCC)
 #pragma location="RESERVED_ADDRESS_SPACE"
 __no_init uint8 _reserved[1932];
 #pragma required=_reserved
+#endif
 #endif
 
 // 64-bit Extended Address of this device
@@ -351,6 +357,9 @@ bool OnBoard_CheckVoltage( void )
  *********************************************************************/
 uint16 OnBoard_stack_used(void)
 {
+#if defined(__SDCC)
+  return 0;
+#else
   uint8 const *ptr;
   uint8 cnt = 0;
 
@@ -371,6 +380,7 @@ uint16 OnBoard_stack_used(void)
   }
 
   return (uint16)(CSTACK_END - ptr + 1);
+#endif
 }
 
 /*********************************************************************

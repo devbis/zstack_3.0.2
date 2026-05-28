@@ -22,7 +22,7 @@
   its documentation for any purpose.
 
   YOU FURTHER ACKNOWLEDGE AND AGREE THAT THE SOFTWARE AND DOCUMENTATION ARE
-  PROVIDED “AS IS” WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+  PROVIDED ï¿½AS ISï¿½ WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
   INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF MERCHANTABILITY, TITLE,
   NON-INFRINGEMENT AND FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL
   TEXAS INSTRUMENTS OR ITS LICENSORS BE LIABLE OR OBLIGATED UNDER CONTRACT,
@@ -116,8 +116,13 @@
 /* The PCON instruction must be 4-byte aligned. The following code may cause excessive power
  * consumption if not aligned. See linker file ".xcl" for actual placement.
  */
+#if defined(__SDCC)
+#pragma codeseg SLEEP_CODE
+void halSetSleepMode(void) __nonbanked;
+#else
 #pragma location = "SLEEP_CODE"
 void halSetSleepMode(void);
+#endif
 
 /* This value is used to adjust the sleep timer compare value such that the sleep timer
  * compare takes into account the amount of processing time spent in function halSleep().
@@ -233,11 +238,20 @@ void halSleepSetTimer(uint32 timeout);
  * @return      None.
  **************************************************************************************************
  */
+#if defined(__SDCC)
+void halSetSleepMode(void) __nonbanked
+{
+  PCON = halSleepPconValue;
+  HAL_DISABLE_INTERRUPTS();
+}
+#pragma codeseg HOME
+#else
 void halSetSleepMode(void)
 {
   PCON = halSleepPconValue;
   HAL_DISABLE_INTERRUPTS();
 }
+#endif
 
 /**************************************************************************************************
  * @fn          halSetMaxSleepLoopTime
@@ -431,7 +445,7 @@ void halSleep( uint32 osal_timeout )
 
       HAL_ENABLE_INTERRUPTS();
 
-      /* For CC2530, T2 interrupt won’t be generated when the current count is greater than
+      /* For CC2530, T2 interrupt wonï¿½t be generated when the current count is greater than
        * the comparator. The interrupt is only generated when the current count is equal to
        * the comparator. When the CC2530 is waking up from sleep, there is a small window
        * that the count may be grater than the comparator, therefore, missing the interrupt.

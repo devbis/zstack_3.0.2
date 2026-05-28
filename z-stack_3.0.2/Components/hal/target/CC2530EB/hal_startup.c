@@ -21,7 +21,7 @@
   its documentation for any purpose.
 
   YOU FURTHER ACKNOWLEDGE AND AGREE THAT THE SOFTWARE AND DOCUMENTATION ARE
-  PROVIDED “AS IS” WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+  PROVIDED ï¿½AS ISï¿½ WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
   INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF MERCHANTABILITY, TITLE,
   NON-INFRINGEMENT AND FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL
   TEXAS INSTRUMENTS OR ITS LICENSORS BE LIABLE OR OBLIGATED UNDER CONTRACT,
@@ -45,6 +45,21 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if defined(__SDCC)
+
+unsigned char __sdcc_external_startup( void ) __nonbanked;
+
+unsigned char __sdcc_external_startup( void ) __nonbanked
+{
+  // Map flash bank #1 into XDATA for access to "ROM mapped as data".
+  MEMCTR = (MEMCTR & 0xF8) | 0x01;
+
+  // Returning 0 keeps the standard SDCC data initialization sequence enabled.
+  return 0;
+}
+
+#else
 
 #pragma language=extended
 
@@ -100,4 +115,6 @@ __low_level_init(void)
 
 #ifdef __cplusplus
 }
+#endif
+
 #endif

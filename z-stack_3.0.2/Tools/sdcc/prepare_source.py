@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 
@@ -14,14 +15,18 @@ HAL_SLEEP_IMPL_OLD = (
     b"}"
 )
 HAL_SLEEP_IMPL_NEW = (
-    b"#if !defined(__SDCC)\n"
     b"void halSetSleepMode(void)\n"
     b"{\n"
     b"  PCON = halSleepPconValue;\n"
     b"  HAL_DISABLE_INTERRUPTS();\n"
     b"}\n"
-    b"#endif"
 )
+HAL_SLEEP_IMPL_NEW_TEXT = """void halSetSleepMode(void)
+{
+  PCON = halSleepPconValue;
+  HAL_DISABLE_INTERRUPTS();
+}
+"""
 
 HAL_SLEEP_OPTIMIZE_OLD = b"#pragma optimize=none"
 HAL_SLEEP_OPTIMIZE_NEW = b"#if !defined(__SDCC)\n#pragma optimize=none\n#endif"
@@ -90,10 +95,8 @@ OSAL_NV_GLOBALS_NEW = """/******************************************************
  */
 
 #if defined(__SDCC)
-#define SDCC_ZIGNV_ADDRESS_SPACE_START ((unsigned long)(HAL_NV_PAGE_BEG) * (unsigned long)(HAL_FLASH_PAGE_SIZE))
-#ifndef SDCC_SKIP_FLASH_RESERVATION_SENTINELS
-#define SDCC_SKIP_FLASH_RESERVATION_SENTINELS 1
-#endif
+/* SDCC profiles rely on the linker script to reserve NV pages.
+ */
 #endif
 
 #ifndef OAD_KEEP_NV_PAGES"""
@@ -101,11 +104,7 @@ OSAL_NV_GLOBALS_NEW = """/******************************************************
 OSAL_NV_BUF_OLD = """#pragma location="ZIGNV_ADDRESS_SPACE"
 __no_init uint8 _nvBuf[OSAL_NV_PAGES_USED * OSAL_NV_PAGE_SIZE];
 #pragma required=_nvBuf"""
-OSAL_NV_BUF_NEW = """#if defined(__SDCC)
-#if !SDCC_SKIP_FLASH_RESERVATION_SENTINELS
-const __code __at (SDCC_ZIGNV_ADDRESS_SPACE_START) uint8 _nvBuf[OSAL_NV_PAGES_USED * OSAL_NV_PAGE_SIZE];
-#endif
-#else
+OSAL_NV_BUF_NEW = """#if !defined(__SDCC)
 #pragma location="ZIGNV_ADDRESS_SPACE"
 __no_init uint8 _nvBuf[OSAL_NV_PAGES_USED * OSAL_NV_PAGE_SIZE];
 #pragma required=_nvBuf
@@ -123,20 +122,12 @@ ONBOARD_GLOBALS_NEW = """/******************************************************
  * GLOBAL VARIABLES
  */
 
-#if defined(__SDCC)
-#define SDCC_FLASH_LAST_PAGE_START  ((HAL_NV_PAGE_END + 1UL) * HAL_FLASH_PAGE_SIZE)
-#define SDCC_LOCK_BITS_ADDRESS      (SDCC_FLASH_LAST_PAGE_START + HAL_FLASH_PAGE_SIZE - HAL_FLASH_LOCK_BITS)
-#define SDCC_IEEE_ADDRESS           (SDCC_LOCK_BITS_ADDRESS - HAL_FLASH_IEEE_SIZE)
-#endif
-
 #if defined MAKE_CRC_SHDW"""
 
 ONBOARD_LOCKBITS_OLD = """#pragma location="LOCK_BITS_ADDRESS_SPACE"
 __no_init uint8 _lockBits[16];
 #pragma required=_lockBits"""
-ONBOARD_LOCKBITS_NEW = """#if defined(__SDCC)
-const __code __at (SDCC_LOCK_BITS_ADDRESS) uint8 _lockBits[16];
-#else
+ONBOARD_LOCKBITS_NEW = """#if !defined(__SDCC)
 #pragma location="LOCK_BITS_ADDRESS_SPACE"
 __no_init uint8 _lockBits[16];
 #pragma required=_lockBits
@@ -145,20 +136,23 @@ __no_init uint8 _lockBits[16];
 ONBOARD_NVIEEE_OLD = """#pragma location="IEEE_ADDRESS_SPACE"
 __no_init uint8 _nvIEEE[Z_EXTADDR_LEN];
 #pragma required=_nvIEEE"""
-ONBOARD_NVIEEE_NEW = """#if defined(__SDCC)
-const __code __at (SDCC_IEEE_ADDRESS) uint8 _nvIEEE[Z_EXTADDR_LEN];
-#else
+ONBOARD_NVIEEE_NEW = """#if !defined(__SDCC)
 #pragma location="IEEE_ADDRESS_SPACE"
 __no_init uint8 _nvIEEE[Z_EXTADDR_LEN];
 #pragma required=_nvIEEE
 #endif"""
 
+ONBOARD_RESERVED_NEW = """#if !defined(__SDCC)
+#pragma location="RESERVED_ADDRESS_SPACE"
+__no_init uint8 _reserved[1932];
+#pragma required=_reserved
+#endif"""
+
+
 ONBOARD_RESERVED_OLD = """#pragma location="RESERVED_ADDRESS_SPACE"
 __no_init uint8 _reserved[1932];
 #pragma required=_reserved"""
-ONBOARD_RESERVED_NEW = """#if defined(__SDCC)
-const __code __at (SDCC_FLASH_LAST_PAGE_START) uint8 _reserved[1932];
-#else
+ONBOARD_RESERVED_NEW = """#if !defined(__SDCC)
 #pragma location="RESERVED_ADDRESS_SPACE"
 __no_init uint8 _reserved[1932];
 #pragma required=_reserved
@@ -302,6 +296,38 @@ HAL_TYPES_BLOCK_NEW_WITH_HELPERS = """/* ----------- IAR Compiler ----------- */
 
 ZCL_SAMPLEAPPS_UI_OLD = "typedef void (* uiAppUpdateLcd_t)(uint8 uiCurrentState, char * line[3]);"
 ZCL_SAMPLEAPPS_UI_NEW = "typedef void (* uiAppUpdateLcd_t)(uint8 uiCurrentState, char * line[3]) __reentrant;"
+ZCL_READWRITE_CB_OLD = """typedef ZStatus_t (*zclReadWriteCB_t)( uint16 clusterId, uint16 attrId, uint8 oper,
+                                       uint8 *pValue, uint16 *pLen );"""
+ZCL_READWRITE_CB_NEW = """typedef ZStatus_t (*zclReadWriteCB_t)( uint16 clusterId, uint16 attrId, uint8 oper,
+                                       uint8 *pValue, uint16 *pLen ) __reentrant;"""
+ZCL_AUTHORIZE_CB_OLD = "typedef ZStatus_t (*zclAuthorizeCB_t)( afAddrType_t *srcAddr, zclAttrRec_t *pAttr, uint8 oper );"
+ZCL_AUTHORIZE_CB_NEW = "typedef ZStatus_t (*zclAuthorizeCB_t)( afAddrType_t *srcAddr, zclAttrRec_t *pAttr, uint8 oper ) __reentrant;"
+ZCL_VALIDATE_CB_OLD = "typedef uint8 (*zclValidateAttrData_t)( zclAttrRec_t *pAttr, zclWriteRec_t *pAttrInfo );"
+ZCL_VALIDATE_CB_NEW = "typedef uint8 (*zclValidateAttrData_t)( zclAttrRec_t *pAttr, zclWriteRec_t *pAttrInfo ) __reentrant;"
+ZMAC_APPLYSEC_CB_OLD = "typedef uint8 (*applySecCB_t)( uint8 len, uint8 *msdu );"
+ZMAC_APPLYSEC_CB_NEW = "typedef uint8 (*applySecCB_t)( uint8 len, uint8 *msdu ) __reentrant;"
+BINDING_ADD_ENTRY_CB_OLD = """extern BindingEntry_t *bindAddEntry( byte srcEpInt,
+                                  zAddrType_t *dstAddr, byte dstEpInt,
+                                  byte numClusterIds, uint16 *clusterIds );"""
+BINDING_ADD_ENTRY_CB_NEW = """extern BindingEntry_t *(*pbindAddEntry)( byte srcEpInt,
+                                  zAddrType_t *dstAddr, byte dstEpInt,
+                                  byte numClusterIds, uint16 *clusterIds );"""
+BDB_FINDING_BINDING_DSTADDR_OLD = "  zAddrType_t dstAddr = { 0 };"
+BDB_FINDING_BINDING_DSTADDR_NEW = """  zAddrType_t dstAddr;
+  osal_memset(&dstAddr, 0, sizeof(dstAddr));"""
+ZCL_GREEN_POWER_DSTADDR_OLD = "  afAddrType_t dstAddr = {0};"
+ZCL_GREEN_POWER_DSTADDR_NEW = """  afAddrType_t dstAddr;
+  osal_memset(&dstAddr, 0, sizeof(dstAddr));"""
+BDB_REPORTING_SEARCH_PROTO_OLD = """static bdbRepAttrDefaultCfgRecordLinkedListItem_t* bdb_repAttrDefaultCfgRecordsLinkedListSearch( bdbRepAttrDefaultCfgRecordLinkedList_t *list, 
+                                                                                                bdbReportAttrDefaultCfgData_t searchdata );"""
+BDB_REPORTING_SEARCH_PROTO_NEW = """static bdbRepAttrDefaultCfgRecordLinkedListItem_t* bdb_repAttrDefaultCfgRecordsLinkedListSearch( bdbRepAttrDefaultCfgRecordLinkedList_t *list, 
+                                                                                                bdbReportAttrDefaultCfgData_t *searchdata );"""
+BDB_REPORTING_SEARCH_DEF_OLD = "static bdbRepAttrDefaultCfgRecordLinkedListItem_t* bdb_repAttrDefaultCfgRecordsLinkedListSearch( bdbRepAttrDefaultCfgRecordLinkedList_t *list, bdbReportAttrDefaultCfgData_t searchdata )"
+BDB_REPORTING_SEARCH_DEF_NEW = "static bdbRepAttrDefaultCfgRecordLinkedListItem_t* bdb_repAttrDefaultCfgRecordsLinkedListSearch( bdbRepAttrDefaultCfgRecordLinkedList_t *list, bdbReportAttrDefaultCfgData_t *searchdata )"
+BDB_REPORTING_SEARCH_CMP_OLD = "    if( EQUAL_LLISTCFGATTRITEMDATA( (*(cur->data)), searchdata) )"
+BDB_REPORTING_SEARCH_CMP_NEW = "    if( EQUAL_LLISTCFGATTRITEMDATA( (*(cur->data)), (*searchdata)) )"
+BDB_REPORTING_SEARCH_CALL_OLD = "           bdbRepAttrDefaultCfgRecordLinkedListItem_t* lLItemFound = bdb_repAttrDefaultCfgRecordsLinkedListSearch( &attrDefaultCfgRecordLinkedList, toSearch );"
+BDB_REPORTING_SEARCH_CALL_NEW = "           bdbRepAttrDefaultCfgRecordLinkedListItem_t* lLItemFound = bdb_repAttrDefaultCfgRecordsLinkedListSearch( &attrDefaultCfgRecordLinkedList, &toSearch );"
 
 ONBOARD_H_OLD = "  extern __near_func void Onboard_soft_reset( void );"
 ONBOARD_H_NEW = """  #ifdef __SDCC
@@ -334,12 +360,61 @@ ONBOARD_STACK_BLOCK_NEW = """#ifdef __IAR_SYSTEMS_ICC__
 // Stack Initialization Value
 #define STACK_INIT_VALUE  0xCD
 #elif defined __SDCC
-#define CSTACK_BEG ((uint8 const *)(0x0000))
-#define CSTACK_END ((uint8 const *)(0x0000))
+// SDCC uses an XDATA stack layout that is not meaningfully introspectable here.
 #define STACK_INIT_VALUE  0xCD
 #else
 #error Check compiler compatibility.
 #endif"""
+ONBOARD_STACK_USED_OLD = """uint16 OnBoard_stack_used(void)
+{
+  uint8 const *ptr;
+  uint8 cnt = 0;
+
+  for (ptr = CSTACK_END; ptr > CSTACK_BEG; ptr--)
+  {
+    if (STACK_INIT_VALUE == *ptr)
+    {
+      if (++cnt >= MIN_RAM_INIT)
+      {
+        ptr += MIN_RAM_INIT;
+        break;
+      }
+    }
+    else
+    {
+      cnt = 0;
+    }
+  }
+
+  return (uint16)(CSTACK_END - ptr + 1);
+}"""
+ONBOARD_STACK_USED_NEW = """uint16 OnBoard_stack_used(void)
+{
+#if defined(__SDCC)
+  return 0;
+#else
+  uint8 const *ptr;
+  uint8 cnt = 0;
+
+  for (ptr = CSTACK_END; ptr > CSTACK_BEG; ptr--)
+  {
+    if (STACK_INIT_VALUE == *ptr)
+    {
+      if (++cnt >= MIN_RAM_INIT)
+      {
+        ptr += MIN_RAM_INIT;
+        break;
+      }
+    }
+    else
+    {
+      cnt = 0;
+    }
+  }
+
+  return (uint16)(CSTACK_END - ptr + 1);
+#endif
+}"""
 HAL_BOARD_CFG_INCLUDES_OLD = """#include "hal_mcu.h"
 #include "hal_defs.h"
 #include "hal_types.h"
@@ -352,6 +427,8 @@ HAL_BOARD_CFG_INCLUDES_NEW = """#include "hal_mcu.h"
 #define P_INFOPAGE 0x7800
 #endif"""
 
+ONBOARD_SDCC_STACK_BRANCH_RE = re.compile(r"#elif\s+defined\s*\(?__SDCC\)?")
+
 
 def _replace_once(data: bytes, old: bytes, new: bytes, label: str) -> bytes:
     count = data.count(old)
@@ -360,12 +437,30 @@ def _replace_once(data: bytes, old: bytes, new: bytes, label: str) -> bytes:
     return data.replace(old, new, 1)
 
 
-def prepare_cc2530_hal_sleep(src: Path, dst: Path) -> None:
-    data = src.read_bytes()
-    data = _replace_once(data, HAL_SLEEP_IMPL_OLD, HAL_SLEEP_IMPL_NEW, "hal_sleep implementation")
-    data = _replace_once(data, HAL_SLEEP_OPTIMIZE_OLD, HAL_SLEEP_OPTIMIZE_NEW, "hal_sleep optimize pragma")
+def _write_text_if_changed(dst: Path, text: str) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() and dst.read_text(encoding="utf-8", errors="ignore") == text:
+        return
+    dst.write_text(text, encoding="utf-8")
+
+
+def _write_bytes_if_changed(dst: Path, data: bytes) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() and dst.read_bytes() == data:
+        return
     dst.write_bytes(data)
+
+
+def prepare_cc2530_hal_sleep(src: Path, dst: Path) -> None:
+    text = _read_text(src)
+    if HAL_SLEEP_OPTIMIZE_NEW.decode("ascii") not in text:
+        text = _replace_text_all(
+            text,
+            HAL_SLEEP_OPTIMIZE_OLD.decode("ascii"),
+            HAL_SLEEP_OPTIMIZE_NEW.decode("ascii"),
+            "hal_sleep optimize pragma",
+        )
+    _write_text_if_changed(dst, text)
 
 
 def _replace_text_once(text: str, old: str, new: str, label: str) -> str:
@@ -382,6 +477,10 @@ def _replace_text_all(text: str, old: str, new: str, label: str, *, expected_at_
     return text.replace(old, new)
 
 
+def _has_onboard_sdcc_stack_branch(text: str) -> bool:
+    return ONBOARD_SDCC_STACK_BRANCH_RE.search(text) is not None
+
+
 def _read_text(src: Path) -> str:
     data = src.read_bytes().replace(b"\r\n", b"\n")
     try:
@@ -393,9 +492,10 @@ def _read_text(src: Path) -> str:
 def _prepare_text(src: Path, dst: Path, replacements: list[tuple[str, str, str]]) -> None:
     text = _read_text(src)
     for old, new, label in replacements:
+        if new in text:
+            continue
         text = _replace_text_once(text, old, new, label)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(text, encoding="utf-8")
+    _write_text_if_changed(dst, text)
 
 
 def prepare_cc2530_hal_startup(src: Path, dst: Path) -> None:
@@ -410,8 +510,7 @@ def prepare_cc2530_hal_startup(src: Path, dst: Path) -> None:
 
 
 def prepare_cc2530_osal_math(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(_read_text(src), encoding="utf-8")
+    _write_text_if_changed(dst, _read_text(src))
 
 
 def prepare_cc2530_osal_nv(src: Path, dst: Path) -> None:
@@ -434,6 +533,7 @@ def prepare_cc2530_onboard(src: Path, dst: Path) -> None:
             (ONBOARD_LOCKBITS_OLD, ONBOARD_LOCKBITS_NEW, "OnBoard lockbits"),
             (ONBOARD_NVIEEE_OLD, ONBOARD_NVIEEE_NEW, "OnBoard nv ieee"),
             (ONBOARD_RESERVED_OLD, ONBOARD_RESERVED_NEW, "OnBoard reserved page"),
+            (ONBOARD_STACK_USED_OLD, ONBOARD_STACK_USED_NEW, "OnBoard stack used"),
         ],
     )
 
@@ -449,8 +549,7 @@ def prepare_cc2530_zmain(src: Path, dst: Path) -> None:
 
 
 def prepare_cc2530_hal_lcd(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_bytes(src.read_bytes())
+    _write_bytes_if_changed(dst, src.read_bytes())
 
 
 def prepare_cc2530_mt_af(src: Path, dst: Path) -> None:
@@ -473,6 +572,63 @@ def prepare_cc2530_sapi(src: Path, dst: Path) -> None:
             (SAPI_EXT_PAN_COPY_OLD, SAPI_EXT_PAN_COPY_NEW, "SAPI extended PAN copy"),
         ],
     )
+
+
+def prepare_cc2530_bdb_finding_binding(src: Path, dst: Path) -> None:
+    text = _read_text(src)
+    if BDB_FINDING_BINDING_DSTADDR_NEW not in text:
+        text = _replace_text_once(
+            text,
+            BDB_FINDING_BINDING_DSTADDR_OLD,
+            BDB_FINDING_BINDING_DSTADDR_NEW,
+            "bdb_FindingAndBinding dstAddr zero initialization",
+        )
+    _write_text_if_changed(dst, text)
+
+
+def prepare_cc2530_zcl_green_power(src: Path, dst: Path) -> None:
+    _prepare_text(
+        src,
+        dst,
+        [
+            (
+                ZCL_GREEN_POWER_DSTADDR_OLD,
+                ZCL_GREEN_POWER_DSTADDR_NEW,
+                "zcl_green_power dstAddr zero initialization",
+            ),
+        ],
+    )
+
+
+def prepare_cc2530_bdb_reporting(src: Path, dst: Path) -> None:
+    text = _read_text(src)
+    replacements = [
+        (
+            BDB_REPORTING_SEARCH_PROTO_OLD,
+            BDB_REPORTING_SEARCH_PROTO_NEW,
+            "bdb_Reporting search prototype",
+        ),
+        (
+            BDB_REPORTING_SEARCH_DEF_OLD,
+            BDB_REPORTING_SEARCH_DEF_NEW,
+            "bdb_Reporting search definition",
+        ),
+        (
+            BDB_REPORTING_SEARCH_CMP_OLD,
+            BDB_REPORTING_SEARCH_CMP_NEW,
+            "bdb_Reporting search compare",
+        ),
+        (
+            BDB_REPORTING_SEARCH_CALL_OLD,
+            BDB_REPORTING_SEARCH_CALL_NEW,
+            "bdb_Reporting search call",
+        ),
+    ]
+    for old, new, label in replacements:
+        if new in text:
+            continue
+        text = _replace_text_once(text, old, new, label)
+    _write_text_if_changed(dst, text)
 
 
 def prepare_cc2530_zcl_samplelight(src: Path, dst: Path) -> None:
@@ -509,8 +665,7 @@ def prepare_cc2530_hal_mcu_header(src: Path, dst: Path) -> None:
             HAL_MCU_BLOCK_NEW,
             "hal_mcu sdcc compiler block",
         )
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(text, encoding="utf-8")
+    _write_text_if_changed(dst, text)
 
 
 def prepare_cc2530_hal_types_header(src: Path, dst: Path) -> None:
@@ -526,8 +681,7 @@ def prepare_cc2530_hal_types_header(src: Path, dst: Path) -> None:
         )
     else:
         text = _replace_text_once(text, HAL_TYPES_BLOCK_OLD, HAL_TYPES_BLOCK_NEW, "hal_types sdcc compiler block")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(text, encoding="utf-8")
+    _write_text_if_changed(dst, text)
 
 
 def prepare_cc2530_hal_board_cfg_header(src: Path, dst: Path) -> None:
@@ -539,8 +693,7 @@ def prepare_cc2530_hal_board_cfg_header(src: Path, dst: Path) -> None:
             HAL_BOARD_CFG_INCLUDES_NEW,
             "hal_board_cfg P_INFOPAGE define",
         )
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(text, encoding="utf-8")
+    _write_text_if_changed(dst, text)
 
 
 def prepare_cc2530_zcl_sampleapps_ui_header(src: Path, dst: Path) -> None:
@@ -552,26 +705,48 @@ def prepare_cc2530_zcl_sampleapps_ui_header(src: Path, dst: Path) -> None:
             ZCL_SAMPLEAPPS_UI_NEW,
             "zcl_sampleapps_ui reentrant callback",
         )
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(text, encoding="utf-8")
+    _write_text_if_changed(dst, text)
+
+
+def prepare_cc2530_zcl_header(src: Path, dst: Path) -> None:
+    text = _read_text(src)
+    if ZCL_READWRITE_CB_NEW not in text:
+        text = _replace_text_once(text, ZCL_READWRITE_CB_OLD, ZCL_READWRITE_CB_NEW, "zcl read/write callback")
+    if ZCL_AUTHORIZE_CB_NEW not in text:
+        text = _replace_text_once(text, ZCL_AUTHORIZE_CB_OLD, ZCL_AUTHORIZE_CB_NEW, "zcl authorize callback")
+    if ZCL_VALIDATE_CB_NEW not in text:
+        text = _replace_text_once(text, ZCL_VALIDATE_CB_OLD, ZCL_VALIDATE_CB_NEW, "zcl validate callback")
+    _write_text_if_changed(dst, text)
+
+
+def prepare_cc2530_zmac_header(src: Path, dst: Path) -> None:
+    text = _read_text(src)
+    if ZMAC_APPLYSEC_CB_NEW not in text:
+        text = _replace_text_once(text, ZMAC_APPLYSEC_CB_OLD, ZMAC_APPLYSEC_CB_NEW, "ZMAC apply security callback")
+    _write_text_if_changed(dst, text)
+
+
+def prepare_cc2530_binding_table_header(src: Path, dst: Path) -> None:
+    text = _read_text(src)
+    if BINDING_ADD_ENTRY_CB_NEW not in text:
+        text = _replace_text_once(text, BINDING_ADD_ENTRY_CB_OLD, BINDING_ADD_ENTRY_CB_NEW, "BindingTable add entry callback")
+    _write_text_if_changed(dst, text)
 
 
 def prepare_cc2530_onboard_header(src: Path, dst: Path) -> None:
     text = _read_text(src)
     if ONBOARD_INCLUDES_NEW not in text:
         text = _replace_text_once(text, ONBOARD_INCLUDES_OLD, ONBOARD_INCLUDES_NEW, "OnBoard P_INFOPAGE define")
-    if "#elif defined __SDCC" not in text:
+    if not _has_onboard_sdcc_stack_branch(text):
         text = _replace_text_once(text, ONBOARD_STACK_BLOCK_OLD, ONBOARD_STACK_BLOCK_NEW, "OnBoard stack block")
     if ONBOARD_H_NEW not in text:
         text = _replace_text_once(text, ONBOARD_H_OLD, ONBOARD_H_NEW, "OnBoard soft reset decl")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(text, encoding="utf-8")
+    _write_text_if_changed(dst, text)
 
 
 def prepare_copy(src: Path, dst: Path) -> None:
     data = src.read_bytes().replace(b"\r\n", b"\n")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_bytes(data)
+    _write_bytes_if_changed(dst, data)
 
 
 def main() -> int:
@@ -589,12 +764,18 @@ def main() -> int:
             "cc2530-hal-lcd",
             "cc2530-mt-af",
             "cc2530-sapi",
+        "cc2530-bdb-finding-binding",
+            "cc2530-zcl-green-power",
+            "cc2530-bdb-reporting",
             "cc2530-zcl-samplelight",
             "cc2530-zcl-samplelight-data",
             "cc2530-hal-mcu-h",
             "cc2530-hal-types-h",
             "cc2530-hal-board-cfg-h",
             "cc2530-zcl-sampleapps-ui-h",
+            "cc2530-zcl-h",
+            "cc2530-zmac-h",
+            "cc2530-binding-table-h",
             "cc2530-onboard-h",
             "copy",
         ),
@@ -621,6 +802,12 @@ def main() -> int:
         prepare_cc2530_mt_af(args.input, args.output)
     elif args.mode == "cc2530-sapi":
         prepare_cc2530_sapi(args.input, args.output)
+    elif args.mode == "cc2530-bdb-finding-binding":
+        prepare_cc2530_bdb_finding_binding(args.input, args.output)
+    elif args.mode == "cc2530-zcl-green-power":
+        prepare_cc2530_zcl_green_power(args.input, args.output)
+    elif args.mode == "cc2530-bdb-reporting":
+        prepare_cc2530_bdb_reporting(args.input, args.output)
     elif args.mode == "cc2530-zcl-samplelight":
         prepare_cc2530_zcl_samplelight(args.input, args.output)
     elif args.mode == "cc2530-zcl-samplelight-data":
@@ -633,6 +820,12 @@ def main() -> int:
         prepare_cc2530_hal_board_cfg_header(args.input, args.output)
     elif args.mode == "cc2530-zcl-sampleapps-ui-h":
         prepare_cc2530_zcl_sampleapps_ui_header(args.input, args.output)
+    elif args.mode == "cc2530-zcl-h":
+        prepare_cc2530_zcl_header(args.input, args.output)
+    elif args.mode == "cc2530-zmac-h":
+        prepare_cc2530_zmac_header(args.input, args.output)
+    elif args.mode == "cc2530-binding-table-h":
+        prepare_cc2530_binding_table_header(args.input, args.output)
     elif args.mode == "cc2530-onboard-h":
         prepare_cc2530_onboard_header(args.input, args.output)
     elif args.mode == "copy":
